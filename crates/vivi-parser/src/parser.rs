@@ -44,6 +44,8 @@ impl Parser {
             Some(Token::System) => Ok(Item::System(self.parse_system()?)),
             Some(Token::World) => Ok(Item::World(self.parse_world()?)),
             Some(Token::Fn) => Ok(Item::Fn(self.parse_fn_def()?)),
+            Some(Token::Extern) => Ok(Item::Extern(self.parse_extern_block()?)),
+            Some(Token::EntityKw) => Ok(Item::Entity(self.parse_entity_def()?)),
             Some(other) => Err(self.error(format!("expected top-level item, found `{other}`"))),
             None => Err(self.error_eof("expected top-level item")),
         }
@@ -505,6 +507,118 @@ impl Parser {
             }
             _ => Err(self.error("expected type".into())),
         }
+    }
+
+    fn parse_extern_block(&mut self) -> Result<ExternBlock, ParseError> {
+        let start = self.current_span().start;
+        self.expect(Token::Extern)?;
+
+        // Optional module name: extern "physics" { ... }
+        let module_name = if let Some(Token::Ident(name)) = self.peek_token() {
+            // We don't have string literals, so use bare ident as module name
+            self.advance();
+            name
+        } else {
+            "host".to_string()
+        };
+
+        self.expect(Token::LBrace)?;
+        self.skip_newlines();
+
+        let mut functions = Vec::new();
+        while !self.check(&Token::RBrace) {
+            let fn_start = self.current_span().start;
+            self.expect(Token::Fn)?;
+            let name = self.expect_ident()?;
+            self.expect(Token::LParen)?;
+
+            let mut params = Vec::new();
+            while !self.check(&Token::RParen) {
+                let param_start = self.current_span().start;
+                let param_name = self.expect_ident()?;
+                self.expect(Token::Colon)?;
+                let ty = self.parse_type()?;
+                let param_end = self.previous_span().end;
+                params.push(FnParam {
+                    name: param_name,
+                    ty,
+                    span: param_start..param_end,
+                });
+                if self.check(&Token::Comma) {
+                    self.advance();
+                }
+            }
+            self.expect(Token::RParen)?;
+
+            let return_ty = if self.check(&Token::Arrow) {
+                self.advance();
+                Some(self.parse_type()?)
+            } else {
+                None
+            };
+
+            let fn_end = self.previous_span().end;
+            functions.push(ExternFn {
+                name,
+                params,
+                return_ty,
+                span: fn_start..fn_end,
+            });
+            self.skip_newlines();
+        }
+        self.expect(Token::RBrace)?;
+        let end = self.previous_span().end;
+
+        Ok(ExternBlock {
+            module_name,
+            functions,
+            span: start..end,
+        })
+    }
+
+    fn parse_entity_def(&mut self) -> Result<EntityDef, ParseError> {
+        let start = self.current_span().start;
+        self.expect(Token::EntityKw)?;
+        let name = self.expect_ident()?;
+        self.expect(Token::LBrace)?;
+        self.skip_newlines();
+
+        let mut components = Vec::new();
+        while !self.check(&Token::RBrace) {
+            let comp_start = self.current_span().start;
+            let comp_name = self.expect_ident()?;
+            self.expect(Token::LBrace)?;
+            self.skip_newlines();
+
+            let mut fields = Vec::new();
+            while !self.check(&Token::RBrace) {
+                let field_name = self.expect_ident()?;
+                self.expect(Token::Colon)?;
+                let value = self.parse_expr()?;
+                fields.push((field_name, value));
+                self.skip_newlines();
+                if self.check(&Token::Comma) {
+                    self.advance();
+                    self.skip_newlines();
+                }
+            }
+            self.expect(Token::RBrace)?;
+            let comp_end = self.previous_span().end;
+            components.push(EntityComponent {
+                component: comp_name,
+                fields,
+                span: comp_start..comp_end,
+            });
+            self.skip_newlines();
+        }
+        self.expect(Token::RBrace)?;
+        let end = self.previous_span().end;
+
+        Ok(EntityDef {
+            name,
+            components,
+            span: start..end,
+        })
     }
 
     fn parse_fn_def(&mut self) -> Result<FnDef, ParseError> {

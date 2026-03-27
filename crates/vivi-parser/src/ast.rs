@@ -13,6 +13,8 @@ pub enum Item {
     System(SystemDef),
     World(WorldDef),
     Fn(FnDef),
+    Extern(ExternBlock),
+    Entity(EntityDef),
 }
 
 #[derive(Debug, Clone)]
@@ -195,6 +197,35 @@ pub struct FnDef {
 pub struct FnParam {
     pub name: String,
     pub ty: TypeName,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternBlock {
+    pub module_name: String, // "host" by default
+    pub functions: Vec<ExternFn>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternFn {
+    pub name: String,
+    pub params: Vec<FnParam>,
+    pub return_ty: Option<TypeName>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct EntityDef {
+    pub name: String,
+    pub components: Vec<EntityComponent>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct EntityComponent {
+    pub component: String,
+    pub fields: Vec<(String, Expr)>,
     pub span: Span,
 }
 

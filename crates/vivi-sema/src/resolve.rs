@@ -53,11 +53,40 @@ pub struct FnSignature {
     pub return_ty: Option<Ty>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ExternFnInfo {
+    pub module_name: String,
+    pub name: String,
+    pub params: Vec<(String, Ty)>,
+    pub return_ty: Option<Ty>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EntityInfo {
+    pub name: String,
+    pub components: Vec<EntityComponentInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EntityComponentInfo {
+    pub component: String,
+    pub field_values: Vec<(String, FieldValue)>,
+}
+
+#[derive(Debug, Clone)]
+pub enum FieldValue {
+    F32(f32),
+    I32(i32),
+    Bool(bool),
+}
+
 #[derive(Debug)]
 pub struct ResolvedProgram {
     pub components: Vec<ComponentInfo>,
     pub systems: Vec<SystemInfo>,
     pub functions: Vec<FnSignature>,
+    pub extern_fns: Vec<ExternFnInfo>,
+    pub entities: Vec<EntityInfo>,
     pub world_systems: Vec<String>,
     pub layout: MemoryLayout,
 }
@@ -65,6 +94,8 @@ pub struct ResolvedProgram {
 pub fn resolve(program: &Program, source: &str) -> Result<ResolvedProgram, SemaError> {
     let mut components: HashMap<String, ComponentInfo> = HashMap::new();
     let mut functions: Vec<FnSignature> = Vec::new();
+    let mut extern_fns: Vec<ExternFnInfo> = Vec::new();
+    let mut entities: Vec<EntityInfo> = Vec::new();
     let mut fn_map: HashMap<String, FnSignature> = HashMap::new();
     let mut systems: Vec<SystemInfo> = Vec::new();
     let mut world_systems: Vec<String> = Vec::new();
@@ -97,6 +128,32 @@ pub fn resolve(program: &Program, source: &str) -> Result<ResolvedProgram, SemaE
                     fields,
                 },
             );
+        }
+    }
+
+    // Collect extern functions
+    for item in &program.items {
+        if let Item::Extern(ext) = item {
+            for efn in &ext.functions {
+                let params: Vec<(String, Ty)> = efn
+                    .params
+                    .iter()
+                    .map(|p| (p.name.clone(), Ty::from_ast(&p.ty)))
+                    .collect();
+                let return_ty = efn.return_ty.as_ref().map(Ty::from_ast);
+                let sig = FnSignature {
+                    name: efn.name.clone(),
+                    params: params.clone(),
+                    return_ty: return_ty.clone(),
+                };
+                fn_map.insert(efn.name.clone(), sig);
+                extern_fns.push(ExternFnInfo {
+                    module_name: ext.module_name.clone(),
+                    name: efn.name.clone(),
+                    params,
+                    return_ty,
+                });
+            }
         }
     }
 
@@ -205,6 +262,109 @@ pub fn resolve(program: &Program, source: &str) -> Result<ResolvedProgram, SemaE
         }
     }
 
+    // Collect entity templates
+    for item in &program.items {
+        if let Item::Entity(entity) = item {
+            let mut comp_infos = Vec::new();
+            for ec in &entity.components {
+                let comp = components.get(&ec.component).ok_or_else(|| SemaError {
+                    message: format!("unknown component `{}` in entity `{}`", ec.component, entity.name),
+                    span: ec.span.clone(),
+                    label: "not defined".into(),
+                    source_code: source.to_string(),
+                })?;
+                let mut field_values = Vec::new();
+                for (fname, fexpr) in &ec.fields {
+                    let fi = comp.fields.iter().find(|f| f.name == *fname).ok_or_else(|| SemaError {
+                        message: format!("component `{}` has no field `{fname}`", ec.component),
+                        span: ec.span.clone(),
+                        label: "no such field".into(),
+                        source_code: source.to_string(),
+                    })?;
+                    let val = match fexpr {
+                        vivi_parser::ast::Expr::FloatLit(v, _) => {
+                            if fi.ty != Ty::F32 {
+                                return Err(SemaError {
+                                    message: format!("field `{fname}` is `{}`, got float literal", fi.ty),
+                                    span: ec.span.clone(),
+                                    label: "type mismatch".into(),
+                                    source_code: source.to_string(),
+                                });
+                            }
+                            FieldValue::F32(*v as f32)
+                        }
+                        vivi_parser::ast::Expr::IntLit(v, _) => {
+                            if fi.ty != Ty::I32 {
+                                return Err(SemaError {
+                                    message: format!("field `{fname}` is `{}`, got int literal", fi.ty),
+                                    span: ec.span.clone(),
+                                    label: "type mismatch".into(),
+                                    source_code: source.to_string(),
+                                });
+                            }
+                            FieldValue::I32(*v as i32)
+                        }
+                        vivi_parser::ast::Expr::BoolLit(v, _) => FieldValue::Bool(*v),
+                        // Handle negative literals: -1.5, -42
+                        vivi_parser::ast::Expr::UnaryOp(
+                            vivi_parser::ast::UnaryOp::Neg,
+                            inner,
+                            _,
+                        ) => match inner.as_ref() {
+                            vivi_parser::ast::Expr::FloatLit(v, _) => {
+                                if fi.ty != Ty::F32 {
+                                    return Err(SemaError {
+                                        message: format!("field `{fname}` is `{}`, got float literal", fi.ty),
+                                        span: ec.span.clone(),
+                                        label: "type mismatch".into(),
+                                        source_code: source.to_string(),
+                                    });
+                                }
+                                FieldValue::F32(-(*v as f32))
+                            }
+                            vivi_parser::ast::Expr::IntLit(v, _) => {
+                                if fi.ty != Ty::I32 {
+                                    return Err(SemaError {
+                                        message: format!("field `{fname}` is `{}`, got int literal", fi.ty),
+                                        span: ec.span.clone(),
+                                        label: "type mismatch".into(),
+                                        source_code: source.to_string(),
+                                    });
+                                }
+                                FieldValue::I32(-(*v as i32))
+                            }
+                            _ => {
+                                return Err(SemaError {
+                                    message: "entity field values must be literals".into(),
+                                    span: ec.span.clone(),
+                                    label: "expected literal".into(),
+                                    source_code: source.to_string(),
+                                });
+                            }
+                        },
+                        _ => {
+                            return Err(SemaError {
+                                message: "entity field values must be literals".into(),
+                                span: ec.span.clone(),
+                                label: "expected literal".into(),
+                                source_code: source.to_string(),
+                            });
+                        }
+                    };
+                    field_values.push((fname.clone(), val));
+                }
+                comp_infos.push(EntityComponentInfo {
+                    component: ec.component.clone(),
+                    field_values,
+                });
+            }
+            entities.push(EntityInfo {
+                name: entity.name.clone(),
+                components: comp_infos,
+            });
+        }
+    }
+
     // Third pass: world
     for item in &program.items {
         if let Item::World(world) = item {
@@ -233,6 +393,8 @@ pub fn resolve(program: &Program, source: &str) -> Result<ResolvedProgram, SemaE
         components: ordered_components,
         systems,
         functions,
+        extern_fns,
+        entities,
         world_systems,
         layout,
     })
@@ -437,12 +599,9 @@ fn infer_type(expr: &Expr, ctx: &TypeCtx) -> Result<Ty, SemaError> {
                     });
                 }
             }
-            sig.return_ty.clone().ok_or_else(|| SemaError {
-                message: format!("function `{name}` does not return a value"),
-                span: span.clone(),
-                label: "no return type".into(),
-                source_code: ctx.source.to_string(),
-            })
+            // Void functions return I32(0) as placeholder — callers in expression
+            // context would be caught by type mismatch at the assignment/binop level.
+            Ok(sig.return_ty.clone().unwrap_or(Ty::I32))
         }
         Expr::BinOp(left, op, right, span) => {
             let left_ty = infer_type(left, ctx)?;

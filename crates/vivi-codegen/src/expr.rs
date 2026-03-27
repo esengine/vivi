@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use vivi_parser::ast::*;
 use vivi_sema::layout::{FieldLayout, MemoryLayout};
 use vivi_sema::resolve::EachParamInfo;
@@ -20,6 +20,7 @@ pub struct ExprCtx<'a> {
     pub locals: HashMap<String, LocalVar>,
     pub next_local: u32,
     pub fn_index_map: &'a HashMap<String, u32>,
+    pub void_fns: &'a HashSet<String>,
 }
 
 impl<'a> ExprCtx<'a> {
@@ -28,6 +29,7 @@ impl<'a> ExprCtx<'a> {
         params: &'a [EachParamInfo],
         entity_index_local: u32,
         fn_index_map: &'a HashMap<String, u32>,
+        void_fns: &'a HashSet<String>,
     ) -> Self {
         Self {
             layout,
@@ -36,6 +38,7 @@ impl<'a> ExprCtx<'a> {
             locals: HashMap::new(),
             next_local: entity_index_local + 1,
             fn_index_map,
+            void_fns,
         }
     }
 

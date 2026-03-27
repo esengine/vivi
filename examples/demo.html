@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Vivi ECS Demo</title>
+<style>
+  body {
+    margin: 0;
+    background: #0a0a1a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    font-family: monospace;
+    color: #e0e0e0;
+  }
+  canvas {
+    border: 1px solid #333;
+    image-rendering: pixelated;
+  }
+  h1 { color: #818cf8; margin-bottom: 0.5rem; }
+  p { color: #9ca3af; margin-top: 0; font-size: 14px; }
+</style>
+</head>
+<body>
+<h1>Vivi ECS Demo</h1>
+<p>3 entities with Position + Velocity + Size + Color, rendered via extern fn</p>
+<canvas id="canvas" width="800" height="600"></canvas>
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let currentColor = '#ffffff';
+
+const host = {
+  clear_screen: () => {
+    ctx.fillStyle = '#0a0a1a';
+    ctx.fillRect(0, 0, 800, 600);
+  },
+  set_color: (r, g, b) => {
+    currentColor = `rgb(${r},${g},${b})`;
+  },
+  draw_rect: (x, y, w, h) => {
+    ctx.fillStyle = currentColor;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, Math.min(w, h) * 0.3);
+    ctx.fill();
+
+    // subtle glow
+    ctx.shadowColor = currentColor;
+    ctx.shadowBlur = 15;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  },
+};
+
+async function run() {
+  const resp = await fetch('demo.wasm');
+  const bytes = await resp.arrayBuffer();
+  const { instance } = await WebAssembly.instantiate(bytes, { host });
+  const { init, tick } = instance.exports;
+
+  init();
+
+  function frame() {
+    host.clear_screen();
+    tick();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+
+run().catch(e => {
+  document.body.innerHTML += `<pre style="color:red">${e}</pre>`;
+});
+</script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use vivi_parser::ast::*;
 use vivi_sema::layout::MemoryLayout;
 use vivi_sema::resolve::SystemInfo;
@@ -14,9 +14,10 @@ pub fn compile_system(
     each_stmts: &[Stmt],
     layout: &MemoryLayout,
     fn_index_map: &HashMap<String, u32>,
+    void_fns: &HashSet<String>,
 ) -> Function {
     let entity_index_local: u32 = 0;
-    let mut ctx = ExprCtx::new(layout, &sys.each_params, entity_index_local, fn_index_map);
+    let mut ctx = ExprCtx::new(layout, &sys.each_params, entity_index_local, fn_index_map, void_fns);
 
     let mut instrs: Vec<Instruction<'static>> = Vec::new();
 
@@ -159,7 +160,9 @@ fn compile_stmt(stmt: &Stmt, ctx: &mut ExprCtx, instrs: &mut Vec<Instruction<'st
         }
         Stmt::Expr(expr) => {
             ctx.compile_expr(expr, instrs);
-            instrs.push(Instruction::Drop);
+            if !is_void_call(expr, ctx.void_fns) {
+                instrs.push(Instruction::Drop);
+            }
         }
         Stmt::Return(_, _) => {
             // In system context, return exits the function
@@ -213,5 +216,13 @@ fn infer_expr_ty_simple(expr: &Expr, ctx: &ExprCtx) -> Ty {
         Expr::Call(_, _, _) => Ty::F32, // sema validated; return type used at call site
         Expr::UnaryOp(UnaryOp::Neg, inner, _) => infer_expr_ty_simple(inner, ctx),
         Expr::UnaryOp(UnaryOp::Not, _, _) => Ty::Bool,
+    }
+}
+
+fn is_void_call(expr: &Expr, void_fns: &HashSet<String>) -> bool {
+    if let Expr::Call(name, _, _) = expr {
+        void_fns.contains(name)
+    } else {
+        false
     }
 }

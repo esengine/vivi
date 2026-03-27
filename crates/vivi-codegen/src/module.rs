@@ -1,10 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use vivi_parser::ast::{Item, Program};
-use vivi_sema::resolve::ResolvedProgram;
+use vivi_sema::layout::MemoryLayout;
+use vivi_sema::resolve::{FieldValue, ResolvedProgram};
 use vivi_sema::types::Ty;
 use wasm_encoder::{
-    CodeSection, ExportKind, ExportSection, Function, FunctionSection, Instruction, MemorySection,
-    MemoryType, Module, TypeSection, ValType,
+    CodeSection, ExportKind, ExportSection, Function, FunctionSection, ImportSection,
+    Instruction, MemorySection, MemoryType, Module, TypeSection, ValType,
 };
 
 use crate::function::compile_user_fn;
@@ -22,39 +23,68 @@ fn ty_to_valtype(ty: &Ty) -> ValType {
 pub fn generate_wasm(program: &Program, resolved: &ResolvedProgram) -> Vec<u8> {
     let mut module = Module::new();
 
+    let import_count = resolved.extern_fns.len();
     let fn_count = resolved.functions.len();
     let system_count = resolved.world_systems.len();
 
-    // Build function index map: fn_name -> wasm function index
-    // Layout: [0..fn_count) user fns, [fn_count..fn_count+system_count) systems,
-    //         fn_count+system_count = init, fn_count+system_count+1 = tick
+    // WASM function index layout:
+    // [0 .. import_count)                          imported (extern) functions
+    // [import_count .. import_count+fn_count)      user fns
+    // [import_count+fn_count .. +system_count)     system fns
+    // import_count+fn_count+system_count           init
+    // import_count+fn_count+system_count+1         tick
+
     let mut fn_index_map: HashMap<String, u32> = HashMap::new();
-    for (i, sig) in resolved.functions.iter().enumerate() {
-        fn_index_map.insert(sig.name.clone(), i as u32);
-    }
 
     // -- Type section --
     let mut types = TypeSection::new();
+    let mut type_indices: Vec<u32> = Vec::new(); // type index per function
 
-    // Type for each user fn
+    // Types for extern fns
+    for efn in &resolved.extern_fns {
+        let idx = type_indices.len() as u32;
+        let params: Vec<ValType> = efn.params.iter().map(|(_, ty)| ty_to_valtype(ty)).collect();
+        let results: Vec<ValType> = efn.return_ty.as_ref().map_or(vec![], |ty| vec![ty_to_valtype(ty)]);
+        types.ty().function(params, results);
+        type_indices.push(idx);
+        fn_index_map.insert(efn.name.clone(), fn_index_map.len() as u32);
+    }
+
+    // Types for user fns
     for sig in &resolved.functions {
+        let idx = type_indices.len() as u32;
         let params: Vec<ValType> = sig.params.iter().map(|(_, ty)| ty_to_valtype(ty)).collect();
         let results: Vec<ValType> = sig.return_ty.as_ref().map_or(vec![], |ty| vec![ty_to_valtype(ty)]);
         types.ty().function(params, results);
+        type_indices.push(idx);
+        fn_index_map.insert(sig.name.clone(), fn_index_map.len() as u32);
     }
 
-    // Type for system functions and init/tick: () -> ()
-    let void_type_idx = fn_count as u32;
+    // Type for void () -> () (systems, init, tick)
+    let void_type_idx = type_indices.len() as u32;
     types.ty().function(vec![], vec![]);
 
     module.section(&types);
 
-    // -- Function section --
+    // -- Import section --
+    if !resolved.extern_fns.is_empty() {
+        let mut imports = ImportSection::new();
+        for (i, efn) in resolved.extern_fns.iter().enumerate() {
+            imports.import(
+                &efn.module_name,
+                &efn.name,
+                wasm_encoder::EntityType::Function(type_indices[i]),
+            );
+        }
+        module.section(&imports);
+    }
+
+    // -- Function section (local functions only, not imports) --
     let mut functions = FunctionSection::new();
 
     // User functions
     for i in 0..fn_count {
-        functions.function(i as u32); // type index = fn index
+        functions.function(type_indices[import_count + i]);
     }
 
     // System functions
@@ -81,17 +111,30 @@ pub fn generate_wasm(program: &Program, resolved: &ResolvedProgram) -> Vec<u8> {
 
     // -- Export section --
     let mut exports = ExportSection::new();
-    let init_func_idx = (fn_count + system_count) as u32;
-    let tick_func_idx = (fn_count + system_count + 1) as u32;
+    let init_func_idx = (import_count + fn_count + system_count) as u32;
+    let tick_func_idx = init_func_idx + 1;
     exports.export("init", ExportKind::Func, init_func_idx);
     exports.export("tick", ExportKind::Func, tick_func_idx);
     exports.export("memory", ExportKind::Memory, 0);
     module.section(&exports);
 
-    // -- Code section --
+    // -- Code section (local functions only) --
     let mut codes = CodeSection::new();
 
-    // Compile user functions
+    // Build void function set
+    let mut void_fns: HashSet<String> = HashSet::new();
+    for efn in &resolved.extern_fns {
+        if efn.return_ty.is_none() {
+            void_fns.insert(efn.name.clone());
+        }
+    }
+    for sig in &resolved.functions {
+        if sig.return_ty.is_none() {
+            void_fns.insert(sig.name.clone());
+        }
+    }
+
+    // User functions
     for sig in &resolved.functions {
         let ast_fn = program
             .items
@@ -104,12 +147,12 @@ pub fn generate_wasm(program: &Program, resolved: &ResolvedProgram) -> Vec<u8> {
                 }
             })
             .unwrap();
-        let func = compile_user_fn(sig, &ast_fn.body, &fn_index_map);
+        let func = compile_user_fn(sig, &ast_fn.body, &fn_index_map, &void_fns);
         codes.function(&func);
     }
 
-    // Compile system functions
-    let system_base = fn_count as u32;
+    // System functions
+    let system_base = (import_count + fn_count) as u32;
     for sys_name in &resolved.world_systems {
         let sys_info = resolved.systems.iter().find(|s| s.name == *sys_name).unwrap();
         let ast_system = program
@@ -123,14 +166,15 @@ pub fn generate_wasm(program: &Program, resolved: &ResolvedProgram) -> Vec<u8> {
                 }
             })
             .unwrap();
-        let func = compile_system(sys_info, &ast_system.each.body, &resolved.layout, &fn_index_map);
+        let func = compile_system(sys_info, &ast_system.each.body, &resolved.layout, &fn_index_map, &void_fns);
         codes.function(&func);
     }
 
-    // init
-    codes.function(&compile_init());
+    // init function: set up entity templates
+    let init_func = compile_init(&resolved.entities, &resolved.layout);
+    codes.function(&init_func);
 
-    // tick: calls system functions
+    // tick: call system functions
     let tick_func = compile_tick(system_base, system_count);
     codes.function(&tick_func);
 
@@ -139,15 +183,62 @@ pub fn generate_wasm(program: &Program, resolved: &ResolvedProgram) -> Vec<u8> {
     module.finish()
 }
 
-fn compile_init() -> Function {
+fn compile_init(
+    entities: &[vivi_sema::EntityInfo],
+    layout: &MemoryLayout,
+) -> Function {
     let mut func = Function::new(vec![]);
-    func.instruction(&Instruction::I32Const(0));
-    func.instruction(&Instruction::I32Const(0));
+
+    // Set entity_count = number of entity templates
+    let entity_count = entities.len() as i32;
+    func.instruction(&Instruction::I32Const(0)); // address of entity_count
+    func.instruction(&Instruction::I32Const(entity_count));
     func.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
         offset: 0,
         align: 2,
         memory_index: 0,
     }));
+
+    // Write each entity's component field values into memory
+    for (entity_idx, entity) in entities.iter().enumerate() {
+        for ec in &entity.components {
+            let comp_layout = layout.get_component(&ec.component).unwrap();
+            for (fname, fval) in &ec.field_values {
+                let fl = comp_layout.fields.iter().find(|f| f.name == *fname).unwrap();
+                // address = fl.offset + entity_idx * fl.element_size
+                let addr = fl.offset + (entity_idx as u32) * fl.element_size;
+
+                func.instruction(&Instruction::I32Const(addr as i32));
+                match fval {
+                    FieldValue::F32(v) => {
+                        func.instruction(&Instruction::F32Const(*v));
+                        func.instruction(&Instruction::F32Store(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 2,
+                            memory_index: 0,
+                        }));
+                    }
+                    FieldValue::I32(v) => {
+                        func.instruction(&Instruction::I32Const(*v));
+                        func.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 2,
+                            memory_index: 0,
+                        }));
+                    }
+                    FieldValue::Bool(v) => {
+                        func.instruction(&Instruction::I32Const(if *v { 1 } else { 0 }));
+                        func.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 2,
+                            memory_index: 0,
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
     func.instruction(&Instruction::End);
     func
 }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use vivi_parser::ast::*;
 use vivi_sema::resolve::FnSignature;
 use vivi_sema::types::Ty;
@@ -11,6 +11,7 @@ pub fn compile_user_fn(
     sig: &FnSignature,
     body: &[Stmt],
     fn_index_map: &HashMap<String, u32>,
+    void_fns: &HashSet<String>,
 ) -> Function {
     // Function params are WASM function parameters (not locals).
     // Additional locals come from let statements.
@@ -27,7 +28,7 @@ pub fn compile_user_fn(
 
     // Compile body
     for stmt in body {
-        compile_fn_stmt(stmt, &mut locals, &mut next_local, fn_index_map, &mut instrs);
+        compile_fn_stmt(stmt, &mut locals, &mut next_local, fn_index_map, void_fns, &mut instrs);
     }
 
     // If function has no explicit return at the end, WASM needs an end.
@@ -61,6 +62,7 @@ fn compile_fn_stmt(
     locals: &mut HashMap<String, LocalVar>,
     next_local: &mut u32,
     fn_index_map: &HashMap<String, u32>,
+    void_fns: &HashSet<String>,
     instrs: &mut Vec<Instruction<'static>>,
 ) {
     match stmt {
@@ -93,12 +95,12 @@ fn compile_fn_stmt(
             compile_fn_expr(&if_stmt.condition, locals, fn_index_map, instrs);
             instrs.push(Instruction::If(wasm_encoder::BlockType::Empty));
             for s in &if_stmt.then_body {
-                compile_fn_stmt(s, locals, next_local, fn_index_map, instrs);
+                compile_fn_stmt(s, locals, next_local, fn_index_map, void_fns, instrs);
             }
             if let Some(else_body) = &if_stmt.else_body {
                 instrs.push(Instruction::Else);
                 for s in else_body {
-                    compile_fn_stmt(s, locals, next_local, fn_index_map, instrs);
+                    compile_fn_stmt(s, locals, next_local, fn_index_map, void_fns, instrs);
                 }
             }
             instrs.push(Instruction::End);
@@ -110,7 +112,7 @@ fn compile_fn_stmt(
             instrs.push(Instruction::I32Eqz);
             instrs.push(Instruction::BrIf(1));
             for s in &while_stmt.body {
-                compile_fn_stmt(s, locals, next_local, fn_index_map, instrs);
+                compile_fn_stmt(s, locals, next_local, fn_index_map, void_fns, instrs);
             }
             instrs.push(Instruction::Br(0));
             instrs.push(Instruction::End);
@@ -125,7 +127,13 @@ fn compile_fn_stmt(
         }
         Stmt::Expr(expr) => {
             compile_fn_expr(expr, locals, fn_index_map, instrs);
-            instrs.push(Instruction::Drop);
+            if let Expr::Call(name, _, _) = expr {
+                if !void_fns.contains(name) {
+                    instrs.push(Instruction::Drop);
+                }
+            } else {
+                instrs.push(Instruction::Drop);
+            }
         }
     }
 }

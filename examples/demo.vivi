@@ -1,0 +1,83 @@
+extern host {
+    fn clear_screen()
+    fn draw_rect(x: f32, y: f32, w: f32, h: f32)
+    fn set_color(r: i32, g: i32, b: i32)
+}
+
+component Position {
+    x: f32
+    y: f32
+}
+
+component Velocity {
+    dx: f32
+    dy: f32
+}
+
+component Size {
+    w: f32
+    h: f32
+}
+
+component Color {
+    r: i32
+    g: i32
+    b: i32
+}
+
+fn wrap(value: f32, max: f32) -> f32 {
+    if value > max { return value - max }
+    if value < 0.0 { return value + max }
+    return value
+}
+
+system Movement {
+    query {
+        write Position
+        read Velocity
+    }
+    each(pos: Position, vel: Velocity) {
+        pos.x = wrap(pos.x + vel.dx, 800.0)
+        pos.y = wrap(pos.y + vel.dy, 600.0)
+    }
+}
+
+system Render {
+    query {
+        read Position
+        read Size
+        read Color
+    }
+    each(pos: Position, size: Size, col: Color) {
+        set_color(col.r, col.g, col.b)
+        draw_rect(pos.x, pos.y, size.w, size.h)
+    }
+}
+
+entity Ball1 {
+    Position { x: 100.0, y: 100.0 }
+    Velocity { dx: 2.0, dy: 1.5 }
+    Size { w: 30.0, h: 30.0 }
+    Color { r: 255, g: 100, b: 50 }
+}
+
+entity Ball2 {
+    Position { x: 400.0, y: 300.0 }
+    Velocity { dx: -1.5, dy: 2.0 }
+    Size { w: 20.0, h: 20.0 }
+    Color { r: 50, g: 200, b: 255 }
+}
+
+entity Ball3 {
+    Position { x: 600.0, y: 200.0 }
+    Velocity { dx: 1.0, dy: -1.0 }
+    Size { w: 40.0, h: 40.0 }
+    Color { r: 100, g: 255, b: 100 }
+}
+
+world Game {
+    systems {
+        Movement
+        Render
+    }
+}
