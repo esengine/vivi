@@ -369,7 +369,7 @@ impl Interpreter {
             .flat_map(|sc| sc.fields.iter().map(|(_, e)| e))
             .collect();
 
-        for (i, (_, addr, ty)) in field_addrs.iter().enumerate() {
+        for (i, (_, addr, _ty)) in field_addrs.iter().enumerate() {
             let value = self.eval_expr(all_exprs[i], locals, each_params, entity_idx);
             match value {
                 Value::F32(v) => self.memory[*addr..*addr + 4].copy_from_slice(&v.to_le_bytes()),

@@ -25,8 +25,6 @@ pub fn compile_system(
 
     let mut instrs: Vec<Instruction<'static>> = Vec::new();
 
-    let extra_locals = count_let_stmts(stmts);
-
     if is_bare {
         // Bare system: just compile statements, no entity loop
         for stmt in stmts {
@@ -163,26 +161,6 @@ fn compile_stmt(stmt: &Stmt, ctx: &mut ExprCtx, instrs: &mut Vec<Instruction<'st
             instrs.push(Instruction::Return);
         }
     }
-}
-
-fn count_let_stmts(stmts: &[Stmt]) -> u32 {
-    let mut count = 0u32;
-    for stmt in stmts {
-        match stmt {
-            Stmt::Let(_) => count += 1,
-            Stmt::If(if_stmt) => {
-                count += count_let_stmts(&if_stmt.then_body);
-                if let Some(else_body) = &if_stmt.else_body {
-                    count += count_let_stmts(else_body);
-                }
-            }
-            Stmt::While(while_stmt) => {
-                count += count_let_stmts(&while_stmt.body);
-            }
-            _ => {}
-        }
-    }
-    count
 }
 
 /// Simple type inference for codegen (sema already validated types).

@@ -188,47 +188,6 @@ impl<'a> ExprCtx<'a> {
         }
     }
 
-    /// Compile an inlined function body. Uses block+br for early returns.
-    fn compile_inline_body(&mut self, body: &[Stmt], instrs: &mut Vec<Instruction<'static>>) {
-        // Wrap in a block so `return` can br out with value on stack
-        instrs.push(Instruction::Block(wasm_encoder::BlockType::Result(
-            wasm_encoder::ValType::F32, // assume f32 return for now
-        )));
-        for stmt in body {
-            match stmt {
-                Stmt::Return(Some(expr), _) => {
-                    self.compile_expr(expr, instrs);
-                    instrs.push(Instruction::Br(0)); // break out of block with value
-                }
-                Stmt::If(if_stmt) => {
-                    self.compile_expr(&if_stmt.condition, instrs);
-                    instrs.push(Instruction::If(wasm_encoder::BlockType::Empty));
-                    for s in &if_stmt.then_body {
-                        if let Stmt::Return(Some(expr), _) = s {
-                            self.compile_expr(expr, instrs);
-                            instrs.push(Instruction::Br(1)); // br out of the outer block
-                        }
-                    }
-                    instrs.push(Instruction::End);
-                }
-                Stmt::Let(let_stmt) => {
-                    let ty = if let Some(ast_ty) = &let_stmt.ty {
-                        vivi_sema::types::Ty::from_ast(ast_ty)
-                    } else {
-                        vivi_sema::types::Ty::F32
-                    };
-                    let idx = self.alloc_local(let_stmt.name.clone(), ty);
-                    self.compile_expr(&let_stmt.value, instrs);
-                    instrs.push(Instruction::LocalSet(idx));
-                }
-                _ => {}
-            }
-        }
-        // Fallthrough: should not reach here if all paths return
-        instrs.push(Instruction::F32Const(0.0));
-        instrs.push(Instruction::End); // end block
-    }
-
     /// Determine if an expression produces a float value.
     fn is_float_expr(&self, expr: &Expr) -> bool {
         match expr {
