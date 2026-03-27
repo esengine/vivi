@@ -351,3 +351,4 @@ fn compile_tick(tick_system_indices: &[u32]) -> Function {
     func.instruction(&Instruction::End);
     func
 }
+

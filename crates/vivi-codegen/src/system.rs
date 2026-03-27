@@ -69,27 +69,17 @@ pub fn compile_system(
     instrs.push(Instruction::End); // end function
 
     // Build locals: entity_index (i32) + user locals
-    // We declare enough i32 and f32 locals to cover all let bindings.
-    // For simplicity, declare all extra locals as both i32 and f32 groups.
     let mut local_groups: Vec<(u32, ValType)> = vec![(1, ValType::I32)]; // entity_index
-    if extra_locals > 0 {
-        // Count how many of each type were allocated
-        let mut i32_count = 0u32;
-        let mut f32_count = 0u32;
-        for local in ctx.locals.values() {
-            match local.ty {
-                Ty::F32 => f32_count += 1,
-                Ty::F64 => {} // would need f64 locals
-                _ => i32_count += 1,
-            }
-        }
-        if i32_count > 0 {
-            local_groups.push((i32_count, ValType::I32));
-        }
-        if f32_count > 0 {
-            local_groups.push((f32_count, ValType::F32));
+    let mut i32_count = 0u32;
+    let mut f32_count = 0u32;
+    for local in ctx.locals.values() {
+        match local.ty {
+            Ty::F32 => f32_count += 1,
+            _ => i32_count += 1,
         }
     }
+    if i32_count > 0 { local_groups.push((i32_count, ValType::I32)); }
+    if f32_count > 0 { local_groups.push((f32_count, ValType::F32)); }
 
     let mut func = Function::new(local_groups);
     for instr in &instrs {

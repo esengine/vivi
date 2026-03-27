@@ -2,6 +2,10 @@
 *.wasm
 Cargo.lock
 
+# Build output
+/dist/
+/dist-*/
+
 # IDE
 .idea/
 .vscode/
