@@ -7,15 +7,24 @@
   "engines": {
     "vscode": "^1.75.0"
   },
-  "categories": ["Programming Languages"],
+  "categories": [
+    "Programming Languages"
+  ],
   "main": "./extension.js",
-  "activationEvents": ["onLanguage:vivi"],
+  "activationEvents": [
+    "onLanguage:vivi"
+  ],
   "contributes": {
     "languages": [
       {
         "id": "vivi",
-        "aliases": ["Vivi", "vivi"],
-        "extensions": [".vivi"],
+        "aliases": [
+          "Vivi",
+          "vivi"
+        ],
+        "extensions": [
+          ".vivi"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -36,5 +45,15 @@
         }
       }
     }
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
   }
 }

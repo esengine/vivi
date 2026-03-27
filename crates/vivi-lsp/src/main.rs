@@ -121,6 +121,48 @@ impl SymbolTable {
         Some(String::from_utf8_lossy(&bytes[start..end]).to_string())
     }
 
+    fn completions(&self) -> Vec<CompletionItem> {
+        let mut items = Vec::new();
+
+        // Keywords
+        for kw in &[
+            "component", "system", "query", "read", "write", "each", "world",
+            "entity", "extern", "fn", "if", "else", "while", "let", "return",
+            "spawn", "despawn", "true", "false", "and", "or", "not", "init", "systems",
+        ] {
+            items.push(CompletionItem {
+                label: kw.to_string(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                ..Default::default()
+            });
+        }
+
+        // Types
+        for ty in &["i32", "i64", "f32", "f64", "bool", "Entity"] {
+            items.push(CompletionItem {
+                label: ty.to_string(),
+                kind: Some(CompletionItemKind::TYPE_PARAMETER),
+                ..Default::default()
+            });
+        }
+
+        // User-defined symbols (components, systems, functions, entities)
+        for (name, _) in &self.definitions {
+            let kind = if name.chars().next().map_or(false, |c| c.is_uppercase()) {
+                CompletionItemKind::CLASS
+            } else {
+                CompletionItemKind::FUNCTION
+            };
+            items.push(CompletionItem {
+                label: name.clone(),
+                kind: Some(kind),
+                ..Default::default()
+            });
+        }
+
+        items
+    }
+
     fn find_definition(&self, word: &str) -> Option<Location> {
         let (uri, start, _end) = self.definitions.get(word)?;
         let pos = self.offset_to_position(uri, *start);
@@ -140,6 +182,10 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
         )),
         definition_provider: Some(OneOf::Left(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
+        completion_provider: Some(CompletionOptions {
+            trigger_characters: Some(vec![".".into(), " ".into()]),
+            ..Default::default()
+        }),
         ..Default::default()
     })?;
 
@@ -200,6 +246,10 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
                     });
 
                     let resp = Response::new_ok(req.id, hover);
+                    connection.sender.send(Message::Response(resp))?;
+                } else if req.method == "textDocument/completion" {
+                    let items = symbols.completions();
+                    let resp = Response::new_ok(req.id, Some(items));
                     connection.sender.send(Message::Response(resp))?;
                 } else {
                     let resp = Response::new_err(

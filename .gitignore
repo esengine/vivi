@@ -12,6 +12,10 @@ Cargo.lock
 *.swp
 *.swo
 
+# Node
+node_modules/
+package-lock.json
+
 # OS
 Thumbs.db
 .DS_Store
