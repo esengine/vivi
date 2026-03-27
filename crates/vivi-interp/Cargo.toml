@@ -1,0 +1,8 @@
+[package]
+name = "vivi-interp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+vivi-parser = { path = "../vivi-parser" }
+vivi-sema = { path = "../vivi-sema" }
