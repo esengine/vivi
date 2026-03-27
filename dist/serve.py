@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Simple HTTP server with correct MIME types for WASM source maps."""
 import http.server
-import socketserver
+import os
 
-class WasmHandler(http.server.SimpleHTTPRequestHandler):
-    extensions_map = {
-        **http.server.SimpleHTTPRequestHandler.extensions_map,
-        '.wasm': 'application/wasm',
-        '.map': 'application/json',
-        '.vivi': 'text/plain',
-    }
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def end_headers(self):
+        if self.path.endswith('.wasm'):
+            self.send_header('SourceMap', self.path + '.map')
+        self.send_header('Cache-Control', 'no-cache')
+        super().end_headers()
 
-PORT = 8000
-with socketserver.TCPServer(("", PORT), WasmHandler) as httpd:
-    print(f"Serving at http://localhost:{PORT}")
-    print("Open Chrome DevTools → Sources to debug .vivi files")
-    httpd.serve_forever()
+    def guess_type(self, path):
+        if path.endswith('.wasm'):
+            return 'application/wasm'
+        return super().guess_type(path)
+
+print("http://localhost:8000")
+http.server.HTTPServer(("", 8000), Handler).serve_forever()

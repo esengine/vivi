@@ -99,7 +99,7 @@ pub fn generate_source_map(
         .replace('\t', "\\t");
 
     format!(
-        r#"{{"version":3,"sources":["{source_filename}"],"sourcesContent":["{escaped_content}"],"mappings":"{mappings_str}"}}"#
+        r#"{{"version":3,"names":[],"sources":["{source_filename}"],"sourcesContent":["{escaped_content}"],"mappings":"{mappings_str}"}}"#
     )
 }
 
@@ -208,18 +208,23 @@ pub fn resolve_mappings(
 }
 
 /// Create the sourceMappingURL custom section bytes.
+///
+/// The section payload after the section name must be a WASM-encoded string:
+/// a LEB128 length prefix followed by the UTF-8 URL bytes. V8's decoder
+/// calls `consume_utf8_string()` which expects this format.
 pub fn source_mapping_url_section(url: &str) -> Vec<u8> {
     let section_name = b"sourceMappingURL";
     let name_len = section_name.len();
     let url_bytes = url.as_bytes();
     let url_len = url_bytes.len();
 
-    let content_size = leb128_size(name_len as u32) + name_len + url_len;
+    let content_size = leb128_size(name_len as u32) + name_len + leb128_size(url_len as u32) + url_len;
     let mut data = Vec::new();
     data.push(0); // custom section id
     write_leb128_u32(&mut data, content_size as u32);
     write_leb128_u32(&mut data, name_len as u32);
     data.extend_from_slice(section_name);
+    write_leb128_u32(&mut data, url_len as u32); // URL length prefix (was missing!)
     data.extend_from_slice(url_bytes);
     data
 }

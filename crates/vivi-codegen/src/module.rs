@@ -5,7 +5,7 @@ use vivi_sema::resolve::{FieldValue, ResolvedProgram};
 use vivi_sema::types::Ty;
 use wasm_encoder::{
     CodeSection, ExportKind, ExportSection, Function, FunctionSection, ImportSection,
-    Instruction, MemorySection, MemoryType, Module, TypeSection, ValType,
+    Instruction, MemorySection, MemoryType, Module, NameMap, NameSection, TypeSection, ValType,
 };
 
 use crate::function::compile_user_fn;
@@ -218,6 +218,53 @@ fn generate_wasm_with_mappings(
     codes.function(&tick_func);
 
     module.section(&codes);
+
+    // -- Name section (debug info: function and local variable names) --
+    let mut names = NameSection::new();
+    let mut func_names = NameMap::new();
+    let mut func_idx = 0u32;
+
+    // Import function names
+    for efn in &resolved.extern_fns {
+        func_names.append(func_idx, &efn.name);
+        func_idx += 1;
+    }
+
+    // User function names
+    for sig in &resolved.functions {
+        func_names.append(func_idx, &sig.name);
+        func_idx += 1;
+    }
+
+    // System function names
+    for sys_name in &resolved.world_systems {
+        func_names.append(func_idx, &format!("system_{sys_name}"));
+        func_idx += 1;
+    }
+
+    func_names.append(func_idx, "init");
+    func_names.append(func_idx + 1, "tick");
+
+    names.functions(&func_names);
+    module.section(&names);
+
+    // -- Source map URL (must be LAST section) --
+    // The sourceMappingURL custom section payload must be a WASM-encoded string:
+    // a LEB128 length prefix followed by the UTF-8 URL bytes.
+    // V8's DecodeSoSourceMappingURLSection() calls consume_utf8_string() which
+    // expects this format. Without the length prefix, V8 silently fails to parse
+    // the URL and never fetches the source map.
+    if source.is_some() {
+        let url = b"app.wasm.map";
+        let mut data = Vec::with_capacity(1 + url.len());
+        data.push(url.len() as u8); // LEB128 length prefix (single byte for len < 128)
+        data.extend_from_slice(url);
+        let custom = wasm_encoder::CustomSection {
+            name: std::borrow::Cow::Borrowed("sourceMappingURL"),
+            data: std::borrow::Cow::Owned(data),
+        };
+        module.section(&custom);
+    }
 
     (module.finish(), module_mappings)
 }

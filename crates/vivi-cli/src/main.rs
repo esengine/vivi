@@ -66,7 +66,7 @@ fn main() -> miette::Result<()> {
 
             if target == "web" {
                 // --target web: generate dist/ with .wasm + source map + runtime.js + index.html
-                let (mut wasm_bytes, module_mappings) =
+                let (wasm_bytes, module_mappings) =
                     vivi_codegen::generate_wasm_with_sourcemap(&program, &resolved, &source);
 
                 let out_dir = &output;
@@ -82,10 +82,7 @@ fn main() -> miette::Result<()> {
 
                 let source_filename = input.file_name().unwrap_or_default().to_string_lossy().to_string();
 
-                // Append sourceMappingURL custom section to WASM
-                let url_section = vivi_codegen::source_mapping_url_section("app.wasm.map");
-                wasm_bytes.extend_from_slice(&url_section);
-
+                // sourceMappingURL custom section is now embedded by codegen
                 // Resolve mappings to absolute byte offsets and generate source map
                 let resolved_mappings = vivi_codegen::resolve_mappings(&wasm_bytes, &module_mappings);
                 let source_map_json = vivi_codegen::generate_source_map(

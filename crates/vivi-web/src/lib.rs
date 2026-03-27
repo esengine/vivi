@@ -129,9 +129,7 @@ pub fn generate_runtime_js(resolved: &ResolvedProgram, config: &WebBuildConfig) 
 
     js.push_str(
         r#"async function boot() {
-    const resp = await fetch(WASM_FILE);
-    const bytes = await resp.arrayBuffer();
-    const { instance } = await WebAssembly.instantiate(bytes, imports);
+    const { instance } = await WebAssembly.instantiateStreaming(fetch(WASM_FILE), imports);
     const { init, tick, memory } = instance.exports;
 
     init();
