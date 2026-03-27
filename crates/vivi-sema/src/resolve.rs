@@ -205,60 +205,76 @@ pub fn resolve(program: &Program, source: &str) -> Result<ResolvedProgram, SemaE
     // Third pass: resolve systems
     for item in &program.items {
         if let Item::System(sys) = item {
-            let mut query_entries = Vec::new();
-
-            for entry in &sys.query.entries {
-                if !components.contains_key(&entry.component) {
-                    return Err(SemaError {
-                        message: format!("unknown component `{}`", entry.component),
-                        span: entry.span.clone(),
-                        label: "not defined".into(),
-                        source_code: source.to_string(),
+            if let (Some(query), Some(each)) = (&sys.query, &sys.each) {
+                // System with query + each
+                let mut query_entries = Vec::new();
+                for entry in &query.entries {
+                    if !components.contains_key(&entry.component) {
+                        return Err(SemaError {
+                            message: format!("unknown component `{}`", entry.component),
+                            span: entry.span.clone(),
+                            label: "not defined".into(),
+                            source_code: source.to_string(),
+                        });
+                    }
+                    query_entries.push(QueryEntryInfo {
+                        access: entry.access.clone(),
+                        component: entry.component.clone(),
                     });
                 }
-                query_entries.push(QueryEntryInfo {
-                    access: entry.access.clone(),
-                    component: entry.component.clone(),
-                });
-            }
 
-            // Validate each params reference queried components
-            let mut each_params = Vec::new();
-            for param in &sys.each.params {
-                let in_query = query_entries.iter().any(|q| q.component == param.component);
-                if !in_query {
-                    return Err(SemaError {
-                        message: format!(
-                            "each parameter `{}` references component `{}` not in query",
-                            param.name, param.component
-                        ),
-                        span: param.span.clone(),
-                        label: "not in query".into(),
-                        source_code: source.to_string(),
+                let mut each_params = Vec::new();
+                for param in &each.params {
+                    let in_query = query_entries.iter().any(|q| q.component == param.component);
+                    if !in_query {
+                        return Err(SemaError {
+                            message: format!(
+                                "each parameter `{}` references component `{}` not in query",
+                                param.name, param.component
+                            ),
+                            span: param.span.clone(),
+                            label: "not in query".into(),
+                            source_code: source.to_string(),
+                        });
+                    }
+                    each_params.push(EachParamInfo {
+                        name: param.name.clone(),
+                        component: param.component.clone(),
                     });
                 }
-                each_params.push(EachParamInfo {
-                    name: param.name.clone(),
-                    component: param.component.clone(),
+
+                let mut locals = HashMap::new();
+                type_check_body(
+                    &each.body,
+                    &each_params,
+                    &components,
+                    &mut locals,
+                    &fn_map,
+                    source,
+                )?;
+
+                systems.push(SystemInfo {
+                    name: sys.name.clone(),
+                    query: query_entries,
+                    each_params,
+                });
+            } else {
+                // Bare system: no query/each, just statements
+                let mut locals = HashMap::new();
+                type_check_fn_body(
+                    &sys.body,
+                    &mut locals,
+                    None,
+                    &fn_map,
+                    source,
+                )?;
+
+                systems.push(SystemInfo {
+                    name: sys.name.clone(),
+                    query: vec![],
+                    each_params: vec![],
                 });
             }
-
-            // Type check each body
-            let mut locals = HashMap::new();
-            type_check_body(
-                &sys.each.body,
-                &each_params,
-                &components,
-                &mut locals,
-                &fn_map,
-                source,
-            )?;
-
-            systems.push(SystemInfo {
-                name: sys.name.clone(),
-                query: query_entries,
-                each_params,
-            });
         }
     }
 

@@ -127,7 +127,6 @@ pub fn generate_runtime_js(resolved: &ResolvedProgram, config: &WebBuildConfig) 
     }
     js.push_str("};\n\n");
 
-    // Boot
     js.push_str(
         r#"async function boot() {
     const resp = await fetch(WASM_FILE);

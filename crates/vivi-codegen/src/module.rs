@@ -189,7 +189,20 @@ fn generate_wasm_with_mappings(
             })
             .unwrap();
         let mut fm = FuncMappings::default();
-        let func = compile_system(sys_info, &ast_system.each.body, &resolved.layout, &fn_index_map, &void_fns, src, &mut fm);
+        let func = if let Some(each) = &ast_system.each {
+            // System with query/each — entity loop
+            compile_system(sys_info, &each.body, &resolved.layout, &fn_index_map, &void_fns, src, &mut fm)
+        } else {
+            // Bare system — just compile body as a simple function
+            compile_user_fn(
+                &vivi_sema::FnSignature { name: sys_info.name.clone(), params: vec![], return_ty: None },
+                &ast_system.body,
+                &fn_index_map,
+                &void_fns,
+                src,
+                &mut fm,
+            )
+        };
         codes.function(&func);
         module_mappings.functions.push(fm);
     }

@@ -93,19 +93,34 @@ impl Parser {
         self.expect(Token::LBrace)?;
         self.skip_newlines();
 
-        let query = self.parse_query()?;
-        self.skip_newlines();
-        let each = self.parse_each()?;
-        self.skip_newlines();
-
-        self.expect(Token::RBrace)?;
-        let end = self.previous_span().end;
-        Ok(SystemDef {
-            name,
-            query,
-            each,
-            span: start..end,
-        })
+        // Check if system has query/each or just bare statements
+        if self.check(&Token::Query) {
+            let query = self.parse_query()?;
+            self.skip_newlines();
+            let each = self.parse_each()?;
+            self.skip_newlines();
+            self.expect(Token::RBrace)?;
+            let end = self.previous_span().end;
+            Ok(SystemDef {
+                name,
+                query: Some(query),
+                each: Some(each),
+                body: vec![],
+                span: start..end,
+            })
+        } else {
+            // Bare system: just statements, no query/each
+            let body = self.parse_block_body()?;
+            self.expect(Token::RBrace)?;
+            let end = self.previous_span().end;
+            Ok(SystemDef {
+                name,
+                query: None,
+                each: None,
+                body,
+                span: start..end,
+            })
+        }
     }
 
     fn parse_query(&mut self) -> Result<QueryDef, ParseError> {

@@ -57,8 +57,10 @@ impl TypeName {
 #[derive(Debug, Clone)]
 pub struct SystemDef {
     pub name: String,
-    pub query: QueryDef,
-    pub each: EachBlock,
+    pub query: Option<QueryDef>,
+    pub each: Option<EachBlock>,
+    /// Bare statements for systems without query/each (run once per tick)
+    pub body: Vec<Stmt>,
     pub span: Span,
 }
 

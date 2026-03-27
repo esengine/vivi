@@ -42,8 +42,8 @@ mod tests {
         assert_eq!(prog.items.len(), 1);
         if let ast::Item::System(s) = &prog.items[0] {
             assert_eq!(s.name, "Movement");
-            assert_eq!(s.query.entries.len(), 2);
-            assert_eq!(s.each.params.len(), 2);
+            assert_eq!(s.query.as_ref().unwrap().entries.len(), 2);
+            assert_eq!(s.each.as_ref().unwrap().params.len(), 2);
         } else {
             panic!("expected system");
         }

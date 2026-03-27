@@ -75,7 +75,11 @@ impl Interpreter {
         for item in &program.items {
             match item {
                 Item::System(sys) => {
-                    system_bodies.insert(sys.name.clone(), sys.each.body.clone());
+                    if let Some(each) = &sys.each {
+                        system_bodies.insert(sys.name.clone(), each.body.clone());
+                    } else {
+                        system_bodies.insert(sys.name.clone(), sys.body.clone());
+                    }
                 }
                 Item::Fn(f) => {
                     fn_bodies.insert(f.name.clone(), f.body.clone());
@@ -166,22 +170,28 @@ impl Interpreter {
     }
 
     fn run_system(&mut self, name: &str) {
-        let entity_count =
-            i32::from_le_bytes(self.memory[0..4].try_into().unwrap());
-
         let sys_info = self.system_infos.iter().find(|s| s.name == *name).unwrap().clone();
         let body = self.system_bodies[name].clone();
 
-        for entity_idx in 0..entity_count {
+        if sys_info.each_params.is_empty() && sys_info.query.is_empty() {
+            // Bare system: run once, no entity loop
             let mut locals: HashMap<String, Value> = HashMap::new();
-            let flow = self.exec_stmts(
-                &body,
-                &mut locals,
-                Some(&sys_info.each_params),
-                entity_idx as u32,
-            );
-            if let Flow::Return(_) = flow {
-                break;
+            self.exec_stmts(&body, &mut locals, None, 0);
+        } else {
+            // System with query/each: iterate entities
+            let entity_count =
+                i32::from_le_bytes(self.memory[0..4].try_into().unwrap());
+            for entity_idx in 0..entity_count {
+                let mut locals: HashMap<String, Value> = HashMap::new();
+                let flow = self.exec_stmts(
+                    &body,
+                    &mut locals,
+                    Some(&sys_info.each_params),
+                    entity_idx as u32,
+                );
+                if let Flow::Return(_) = flow {
+                    break;
+                }
             }
         }
     }

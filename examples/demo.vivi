@@ -25,6 +25,10 @@ component Color {
     b: i32
 }
 
+system ClearScreen {
+    clear_screen()
+}
+
 fn wrap(value: f32, max: f32) -> f32 {
     if value > max { return value - max }
     if value < 0.0 { return value + max }
@@ -77,6 +81,7 @@ entity Ball3 {
 
 world Game {
     systems {
+        ClearScreen
         Movement
         Render
     }
