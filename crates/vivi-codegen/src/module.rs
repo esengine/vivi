@@ -180,7 +180,7 @@ fn generate_wasm_with_mappings(
             })
             .unwrap();
         let mut fm = FuncMappings::default();
-        let func = compile_user_fn(sig, &ast_fn.body, &fn_index_map, &void_fns, src, &mut fm);
+        let func = compile_user_fn(sig, &ast_fn.body, &resolved.layout, &fn_index_map, &void_fns, src, &mut fm);
         codes.function(&func);
         module_mappings.functions.push(fm);
     }

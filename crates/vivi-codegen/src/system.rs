@@ -87,6 +87,38 @@ pub fn compile_system(
     func
 }
 
+/// Compile a list of statements with source map tracking.
+pub fn compile_stmts_with_mappings(
+    stmts: &[Stmt],
+    ctx: &mut ExprCtx,
+    instrs: &mut Vec<Instruction<'static>>,
+    source: &str,
+    func_mappings: &mut FuncMappings,
+) {
+    for stmt in stmts {
+        record_stmt_mapping(stmt, instrs.len(), source, func_mappings);
+        compile_stmt(stmt, ctx, instrs);
+    }
+}
+
+/// Build WASM local declaration groups from ExprCtx, skipping indices < skip_count.
+pub fn build_local_groups(ctx: &ExprCtx, skip_count: u32) -> Vec<(u32, ValType)> {
+    let mut i32_count = 0u32;
+    let mut f32_count = 0u32;
+    for local in ctx.locals.values() {
+        if local.index >= skip_count {
+            match local.ty {
+                Ty::F32 => f32_count += 1,
+                _ => i32_count += 1,
+            }
+        }
+    }
+    let mut groups = Vec::new();
+    if i32_count > 0 { groups.push((i32_count, ValType::I32)); }
+    if f32_count > 0 { groups.push((f32_count, ValType::F32)); }
+    groups
+}
+
 fn compile_stmt(stmt: &Stmt, ctx: &mut ExprCtx, instrs: &mut Vec<Instruction<'static>>) {
     match stmt {
         Stmt::Assign(assign) => {
@@ -157,7 +189,11 @@ fn compile_stmt(stmt: &Stmt, ctx: &mut ExprCtx, instrs: &mut Vec<Instruction<'st
                 instrs.push(Instruction::Drop);
             }
         }
-        Stmt::Return(_, _) => {
+        Stmt::Return(Some(expr), _) => {
+            ctx.compile_expr(expr, instrs);
+            instrs.push(Instruction::Return);
+        }
+        Stmt::Return(None, _) => {
             instrs.push(Instruction::Return);
         }
     }

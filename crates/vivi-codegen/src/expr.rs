@@ -51,7 +51,7 @@ impl<'a> ExprCtx<'a> {
     }
 
     /// Emit instructions to compute an expression, leaving result on the WASM stack.
-    pub fn compile_expr(&mut self, expr: &Expr, instrs: &mut Vec<Instruction<'static>>) {
+    pub fn compile_expr(&self, expr: &Expr, instrs: &mut Vec<Instruction<'static>>) {
         match expr {
             Expr::IntLit(v, _) => {
                 instrs.push(Instruction::I32Const(*v as i32));
@@ -121,14 +121,14 @@ impl<'a> ExprCtx<'a> {
         }
     }
 
-    fn compile_field_load(&mut self, obj: &Expr, field: &str, instrs: &mut Vec<Instruction<'static>>) {
+    fn compile_field_load(&self, obj: &Expr, field: &str, instrs: &mut Vec<Instruction<'static>>) {
         let fl = self.resolve_field(obj, field);
         self.compile_field_address(fl.offset, fl.element_size, instrs);
         instrs.push(self.load_instr(&fl.ty));
     }
 
     pub fn compile_field_store(
-        &mut self,
+        &self,
         obj: &Expr,
         field: &str,
         value: &Expr,
