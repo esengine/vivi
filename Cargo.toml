@@ -6,6 +6,7 @@ members = [
     "crates/vivi-sema",
     "crates/vivi-codegen",
     "crates/vivi-interp",
+    "crates/vivi-web",
     "crates/vivi-cli",
     "tests/integration",
 ]

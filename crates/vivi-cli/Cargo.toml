@@ -13,5 +13,6 @@ vivi-parser = { path = "../vivi-parser" }
 vivi-sema = { path = "../vivi-sema" }
 vivi-codegen = { path = "../vivi-codegen" }
 vivi-interp = { path = "../vivi-interp" }
+vivi-web = { path = "../vivi-web" }
 clap = { workspace = true }
 miette = { workspace = true }

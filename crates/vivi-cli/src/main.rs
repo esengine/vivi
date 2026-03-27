@@ -12,14 +12,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Compile a .vivi file to WASM
+    /// Compile a .vivi file to WASM (or web bundle with --target web)
     Build {
         /// Input .vivi file
         input: PathBuf,
 
-        /// Output .wasm file
+        /// Output path (.wasm file or directory for --target web)
         #[arg(short, long, default_value = "output.wasm")]
         output: PathBuf,
+
+        /// Build target: "wasm" (default) or "web" (generates .wasm + runtime.js + index.html)
+        #[arg(long, default_value = "wasm")]
+        target: String,
     },
 
     /// Run a .vivi file with the interpreter
@@ -57,22 +61,58 @@ fn main() -> miette::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Build { input, output } => {
+        Commands::Build { input, output, target } => {
             let (_source, program, resolved) = parse_and_resolve(&input)?;
 
             let wasm_bytes = vivi_codegen::generate_wasm(&program, &resolved);
 
-            std::fs::write(&output, &wasm_bytes)
-                .into_diagnostic()
-                .wrap_err_with(|| format!("failed to write `{}`", output.display()))?;
+            if target == "web" {
+                // --target web: generate dist/ with .wasm + runtime.js + index.html
+                let out_dir = &output;
+                std::fs::create_dir_all(out_dir)
+                    .into_diagnostic()
+                    .wrap_err_with(|| format!("failed to create `{}`", out_dir.display()))?;
 
-            println!(
-                "Compiled {} -> {} ({} bytes, {} pages)",
-                input.display(),
-                output.display(),
-                wasm_bytes.len(),
-                resolved.layout.required_pages()
-            );
+                // Derive title from world name or input filename
+                let title = program.items.iter().find_map(|item| {
+                    if let vivi_parser::ast::Item::World(w) = item { Some(w.name.clone()) } else { None }
+                }).unwrap_or_else(|| {
+                    input.file_stem().unwrap_or_default().to_string_lossy().to_string()
+                });
+
+                let config = vivi_web::WebBuildConfig {
+                    title,
+                    wasm_filename: "app.wasm".to_string(),
+                    ..Default::default()
+                };
+
+                let wasm_path = out_dir.join("app.wasm");
+                let runtime_path = out_dir.join("runtime.js");
+                let html_path = out_dir.join("index.html");
+
+                std::fs::write(&wasm_path, &wasm_bytes).into_diagnostic()?;
+                std::fs::write(&runtime_path, vivi_web::generate_runtime_js(&resolved, &config)).into_diagnostic()?;
+                std::fs::write(&html_path, vivi_web::generate_index_html(&config)).into_diagnostic()?;
+
+                println!("Built web target -> {}/", out_dir.display());
+                println!("  app.wasm     ({} bytes)", wasm_bytes.len());
+                println!("  runtime.js   (auto-generated)");
+                println!("  index.html   (auto-generated)");
+                println!("\nServe with: python -m http.server 8000 -d {}", out_dir.display());
+            } else {
+                // Default: just output .wasm
+                std::fs::write(&output, &wasm_bytes)
+                    .into_diagnostic()
+                    .wrap_err_with(|| format!("failed to write `{}`", output.display()))?;
+
+                println!(
+                    "Compiled {} -> {} ({} bytes, {} pages)",
+                    input.display(),
+                    output.display(),
+                    wasm_bytes.len(),
+                    resolved.layout.required_pages()
+                );
+            }
             Ok(())
         }
 
