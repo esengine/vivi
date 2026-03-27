@@ -213,6 +213,12 @@ impl Parser {
             Some(Token::While) => self.parse_while(),
             Some(Token::Return) => self.parse_return(),
             Some(Token::Spawn) => self.parse_spawn(),
+            Some(Token::Despawn) => {
+                let span = self.current_span();
+                self.advance();
+                let end = self.previous_span().end;
+                Ok(Stmt::Despawn(span.start..end))
+            }
             _ => {
                 let expr = self.parse_expr()?;
                 // Check for assignment

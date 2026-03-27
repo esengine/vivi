@@ -1,0 +1,122 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Vivi",
+  "scopeName": "source.vivi",
+  "fileTypes": ["vivi"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#component-def" },
+    { "include": "#system-def" },
+    { "include": "#world-def" },
+    { "include": "#entity-def" },
+    { "include": "#extern-block" },
+    { "include": "#fn-def" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#constants" },
+    { "include": "#numbers" },
+    { "include": "#operators" },
+    { "include": "#function-call" },
+    { "include": "#field-access" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.double-slash.vivi",
+      "match": "//.*$"
+    },
+    "component-def": {
+      "match": "\\b(component)\\s+([A-Z][a-zA-Z0-9_]*)\\b",
+      "captures": {
+        "1": { "name": "keyword.declaration.component.vivi" },
+        "2": { "name": "entity.name.type.component.vivi" }
+      }
+    },
+    "system-def": {
+      "match": "\\b(system)\\s+([A-Z][a-zA-Z0-9_]*)\\b",
+      "captures": {
+        "1": { "name": "keyword.declaration.system.vivi" },
+        "2": { "name": "entity.name.type.system.vivi" }
+      }
+    },
+    "world-def": {
+      "match": "\\b(world)\\s+([A-Z][a-zA-Z0-9_]*)\\b",
+      "captures": {
+        "1": { "name": "keyword.declaration.world.vivi" },
+        "2": { "name": "entity.name.type.world.vivi" }
+      }
+    },
+    "entity-def": {
+      "match": "\\b(entity)\\s+([A-Z][a-zA-Z0-9_]*)\\b",
+      "captures": {
+        "1": { "name": "keyword.declaration.entity.vivi" },
+        "2": { "name": "entity.name.type.entity.vivi" }
+      }
+    },
+    "extern-block": {
+      "match": "\\b(extern)(?:\\s+([a-zA-Z_][a-zA-Z0-9_]*))?\\b",
+      "captures": {
+        "1": { "name": "keyword.declaration.extern.vivi" },
+        "2": { "name": "entity.name.module.vivi" }
+      }
+    },
+    "fn-def": {
+      "match": "\\b(fn)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\b",
+      "captures": {
+        "1": { "name": "keyword.declaration.fn.vivi" },
+        "2": { "name": "entity.name.function.vivi" }
+      }
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.vivi",
+          "match": "\\b(if|else|while|return|spawn|despawn)\\b"
+        },
+        {
+          "name": "keyword.other.vivi",
+          "match": "\\b(query|read|write|each|systems|init|let)\\b"
+        },
+        {
+          "name": "keyword.operator.logical.vivi",
+          "match": "\\b(and|or|not)\\b"
+        }
+      ]
+    },
+    "types": {
+      "name": "storage.type.vivi",
+      "match": "\\b(i32|i64|f32|f64|bool|Entity)\\b"
+    },
+    "constants": {
+      "name": "constant.language.vivi",
+      "match": "\\b(true|false)\\b"
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.vivi",
+          "match": "\\b[0-9]+\\.[0-9]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.vivi",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "operators": {
+      "name": "keyword.operator.vivi",
+      "match": "->|==|!=|<=|>=|[+\\-*/=<>]"
+    },
+    "function-call": {
+      "match": "\\b([a-z_][a-zA-Z0-9_]*)\\s*\\(",
+      "captures": {
+        "1": { "name": "entity.name.function.call.vivi" }
+      }
+    },
+    "field-access": {
+      "match": "\\.([a-z_][a-zA-Z0-9_]*)\\b",
+      "captures": {
+        "1": { "name": "variable.other.property.vivi" }
+      }
+    }
+  }
+}

@@ -546,6 +546,7 @@ fn check_stmts(stmts: &[Stmt], ctx: &mut TypeCtx) -> Result<(), SemaError> {
                 }
             }
             Stmt::Return(None, _) => {}
+            Stmt::Despawn(_) => {}
             Stmt::Spawn(spawn) => {
                 for sc in &spawn.components {
                     let comp = ctx.components.get(&sc.component).ok_or_else(|| SemaError {

@@ -45,6 +45,7 @@ pub type ExternHandler = Box<dyn Fn(Vec<Value>) -> Option<Value>>;
 enum Flow {
     Continue,
     Return(Option<Value>),
+    Despawn,
 }
 
 pub struct Interpreter {
@@ -187,9 +188,13 @@ impl Interpreter {
             self.exec_stmts(&body, &mut locals, None, 0);
         } else {
             // System with query/each: iterate entities
-            let entity_count =
-                i32::from_le_bytes(self.memory[0..4].try_into().unwrap());
-            for entity_idx in 0..entity_count {
+            let mut entity_idx: i32 = 0;
+            loop {
+                let entity_count =
+                    i32::from_le_bytes(self.memory[0..4].try_into().unwrap());
+                if entity_idx >= entity_count {
+                    break;
+                }
                 let mut locals: HashMap<String, Value> = HashMap::new();
                 let flow = self.exec_stmts(
                     &body,
@@ -197,8 +202,14 @@ impl Interpreter {
                     Some(&sys_info.each_params),
                     entity_idx as u32,
                 );
-                if let Flow::Return(_) = flow {
-                    break;
+                match flow {
+                    Flow::Return(_) => break,
+                    Flow::Despawn => {
+                        // Don't increment: the swapped-in entity is now at entity_idx
+                    }
+                    Flow::Continue => {
+                        entity_idx += 1;
+                    }
                 }
             }
         }
@@ -215,6 +226,7 @@ impl Interpreter {
             match self.exec_stmt(stmt, locals, each_params, entity_idx) {
                 Flow::Continue => {}
                 flow @ Flow::Return(_) => return flow,
+                Flow::Despawn => return Flow::Despawn,
             }
         }
         Flow::Continue
@@ -267,6 +279,7 @@ impl Interpreter {
                     match self.exec_stmts(&while_stmt.body, locals, each_params, entity_idx) {
                         Flow::Continue => {}
                         flow @ Flow::Return(_) => return flow,
+                        Flow::Despawn => return Flow::Despawn,
                     }
                 }
                 Flow::Continue
@@ -279,6 +292,10 @@ impl Interpreter {
             Stmt::Spawn(spawn) => {
                 self.exec_spawn(spawn, locals, each_params, entity_idx);
                 Flow::Continue
+            }
+            Stmt::Despawn(_) => {
+                self.exec_despawn(entity_idx);
+                Flow::Despawn
             }
             Stmt::Expr(expr) => {
                 self.eval_expr(expr, locals, each_params, entity_idx);
@@ -386,6 +403,30 @@ impl Interpreter {
         self.memory[0..4].copy_from_slice(&new_count.to_le_bytes());
     }
 
+    fn exec_despawn(&mut self, entity_idx: u32) {
+        let entity_count = i32::from_le_bytes(self.memory[0..4].try_into().unwrap()) as u32;
+        let last = entity_count - 1;
+
+        // For each component, for each field: copy last entity's data to current position
+        for comp_layout in &self.layout.components.clone() {
+            for fl in &comp_layout.fields {
+                let src_addr = (fl.offset + last * fl.element_size) as usize;
+                let dst_addr = (fl.offset + entity_idx * fl.element_size) as usize;
+                let size = fl.element_size as usize;
+                // Copy byte by byte to avoid borrow issues with overlapping slices
+                if src_addr != dst_addr {
+                    for b in 0..size {
+                        self.memory[dst_addr + b] = self.memory[src_addr + b];
+                    }
+                }
+            }
+        }
+
+        // Decrement entity_count
+        let new_count = (entity_count - 1) as i32;
+        self.memory[0..4].copy_from_slice(&new_count.to_le_bytes());
+    }
+
     fn call_fn(&mut self, name: &str, args: Vec<Value>) -> Value {
         // Check extern handlers first
         if let Some(handler) = self.extern_handlers.get(name) {
@@ -402,8 +443,7 @@ impl Interpreter {
             }
             match self.exec_stmts(&body, &mut locals, None, 0) {
                 Flow::Return(Some(val)) => val,
-                Flow::Return(None) => Value::I32(0),
-                Flow::Continue => Value::I32(0),
+                Flow::Return(None) | Flow::Continue | Flow::Despawn => Value::I32(0),
             }
         } else {
             // Unregistered extern — return default

@@ -183,6 +183,9 @@ fn compile_stmt(stmt: &Stmt, ctx: &mut ExprCtx, instrs: &mut Vec<Instruction<'st
         Stmt::Spawn(spawn) => {
             compile_spawn(spawn, ctx, instrs);
         }
+        Stmt::Despawn(_) => {
+            compile_despawn(ctx, instrs);
+        }
         Stmt::Expr(expr) => {
             ctx.compile_expr(expr, instrs);
             if !is_void_call(expr, ctx.void_fns) {
@@ -284,6 +287,73 @@ fn compile_spawn(
     }));
 }
 
+fn compile_despawn(
+    ctx: &mut ExprCtx,
+    instrs: &mut Vec<Instruction<'static>>,
+) {
+    let mem4 = wasm_encoder::MemArg { offset: 0, align: 2, memory_index: 0 };
+
+    // For each component, for each field: copy last entity's data to current entity
+    for comp_layout in &ctx.layout.components {
+        for fl in &comp_layout.fields {
+            let elem = fl.element_size;
+
+            // dst_addr = fl.offset + entity_index * element_size
+            instrs.push(Instruction::I32Const(fl.offset as i32));
+            instrs.push(Instruction::LocalGet(ctx.entity_index_local));
+            instrs.push(Instruction::I32Const(elem as i32));
+            instrs.push(Instruction::I32Mul);
+            instrs.push(Instruction::I32Add);
+
+            // src_addr = fl.offset + (entity_count - 1) * element_size
+            instrs.push(Instruction::I32Const(fl.offset as i32));
+            instrs.push(Instruction::I32Const(0));
+            instrs.push(Instruction::I32Load(mem4));
+            instrs.push(Instruction::I32Const(1));
+            instrs.push(Instruction::I32Sub);
+            instrs.push(Instruction::I32Const(elem as i32));
+            instrs.push(Instruction::I32Mul);
+            instrs.push(Instruction::I32Add);
+
+            // load from src, store to dst
+            match &fl.ty {
+                Ty::F32 => {
+                    instrs.push(Instruction::F32Load(mem4));
+                    instrs.push(Instruction::F32Store(mem4));
+                }
+                Ty::I32 | Ty::Bool | Ty::Entity => {
+                    instrs.push(Instruction::I32Load(mem4));
+                    instrs.push(Instruction::I32Store(mem4));
+                }
+                Ty::F64 => {
+                    let mem8 = wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 };
+                    instrs.push(Instruction::F64Load(mem8));
+                    instrs.push(Instruction::F64Store(mem8));
+                }
+                Ty::I64 => {
+                    let mem8 = wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 };
+                    instrs.push(Instruction::I64Load(mem8));
+                    instrs.push(Instruction::I64Store(mem8));
+                }
+            }
+        }
+    }
+
+    // Decrement entity_count: memory[0] = memory[0] - 1
+    instrs.push(Instruction::I32Const(0));
+    instrs.push(Instruction::I32Const(0));
+    instrs.push(Instruction::I32Load(mem4));
+    instrs.push(Instruction::I32Const(1));
+    instrs.push(Instruction::I32Sub);
+    instrs.push(Instruction::I32Store(mem4));
+
+    // Decrement entity_index so the loop re-processes the swapped-in entity
+    instrs.push(Instruction::LocalGet(ctx.entity_index_local));
+    instrs.push(Instruction::I32Const(1));
+    instrs.push(Instruction::I32Sub);
+    instrs.push(Instruction::LocalSet(ctx.entity_index_local));
+}
+
 pub fn span_to_line_col(source: &str, offset: usize) -> (u32, u32) {
     let mut line = 0u32;
     let mut col = 0u32;
@@ -313,6 +383,7 @@ pub fn record_stmt_mapping(
         Stmt::If(s) => s.span.start,
         Stmt::While(s) => s.span.start,
         Stmt::Spawn(s) => s.span.start,
+        Stmt::Despawn(span) => span.start,
         Stmt::Expr(e) => e.span().start,
         Stmt::Return(_, span) => span.start,
     };

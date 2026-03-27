@@ -1,0 +1,28 @@
+{
+  "name": "vivi-lang",
+  "displayName": "Vivi Language",
+  "description": "Syntax highlighting for the Vivi ECS language",
+  "version": "0.1.0",
+  "publisher": "vivi",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "vivi",
+        "aliases": ["Vivi", "vivi"],
+        "extensions": [".vivi"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "vivi",
+        "scopeName": "source.vivi",
+        "path": "../vivi.tmLanguage.json"
+      }
+    ]
+  }
+}

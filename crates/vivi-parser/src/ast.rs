@@ -104,6 +104,7 @@ pub enum Stmt {
     If(IfStmt),
     While(WhileStmt),
     Spawn(SpawnStmt),
+    Despawn(Span),
     Expr(Expr),
     Return(Option<Expr>, Span),
 }

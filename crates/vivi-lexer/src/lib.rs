@@ -40,6 +40,8 @@ pub enum Token {
     Return,
     #[token("spawn")]
     Spawn,
+    #[token("despawn")]
+    Despawn,
     #[token("true")]
     True,
     #[token("false")]
@@ -141,6 +143,7 @@ impl std::fmt::Display for Token {
             Token::Let => write!(f, "let"),
             Token::Return => write!(f, "return"),
             Token::Spawn => write!(f, "spawn"),
+            Token::Despawn => write!(f, "despawn"),
             Token::True => write!(f, "true"),
             Token::False => write!(f, "false"),
             Token::And => write!(f, "and"),
