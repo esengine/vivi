@@ -150,6 +150,11 @@ fn generate_wasm_with_mappings(
     // -- Code section (local functions only) --
     let mut codes = CodeSection::new();
 
+    // Build globals map for codegen
+    let globals_map: HashMap<String, crate::expr::GlobalVar> = resolved.globals.iter()
+        .map(|g| (g.name.clone(), crate::expr::GlobalVar { offset: g.offset, ty: g.ty.clone() }))
+        .collect();
+
     // Build void function set
     let mut void_fns: HashSet<String> = HashSet::new();
     for efn in &resolved.extern_fns {
@@ -180,7 +185,7 @@ fn generate_wasm_with_mappings(
             })
             .unwrap();
         let mut fm = FuncMappings::default();
-        let func = compile_user_fn(sig, &ast_fn.body, &resolved.layout, &fn_index_map, &void_fns, src, &mut fm);
+        let func = compile_user_fn(sig, &ast_fn.body, &resolved.layout, &fn_index_map, &void_fns, &globals_map, src, &mut fm);
         codes.function(&func);
         module_mappings.functions.push(fm);
     }
@@ -204,10 +209,10 @@ fn generate_wasm_with_mappings(
             .unwrap();
         let mut fm = FuncMappings::default();
         let func = if let Some(each) = &ast_system.each {
-            compile_system(sys_info, &each.body, &resolved.layout, &fn_index_map, &void_fns, src, &mut fm)
+            compile_system(sys_info, &each.body, &resolved.layout, &fn_index_map, &void_fns, &globals_map, src, &mut fm)
         } else {
             // Bare system: compile as system without entity loop (has layout for spawn)
-            compile_system(sys_info, &ast_system.body, &resolved.layout, &fn_index_map, &void_fns, src, &mut fm)
+            compile_system(sys_info, &ast_system.body, &resolved.layout, &fn_index_map, &void_fns, &globals_map, src, &mut fm)
         };
         codes.function(&func);
         module_mappings.functions.push(fm);
@@ -223,7 +228,7 @@ fn generate_wasm_with_mappings(
         .iter()
         .map(|name| system_index_map[name])
         .collect();
-    let init_func = compile_init(&init_system_indices, &resolved.entities, &resolved.layout);
+    let init_func = compile_init(&init_system_indices, &resolved.entities, &resolved.globals, &resolved.layout);
     codes.function(&init_func);
 
     // tick: call tick systems
@@ -290,6 +295,7 @@ fn generate_wasm_with_mappings(
 fn compile_init(
     init_system_indices: &[u32],
     entities: &[vivi_sema::EntityInfo],
+    globals: &[vivi_sema::resolve::GlobalInfo],
     layout: &MemoryLayout,
 ) -> Function {
     let mut func = Function::new(vec![]);
@@ -301,6 +307,31 @@ fn compile_init(
     func.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
         offset: 0, align: 2, memory_index: 0,
     }));
+
+    // Initialize globals
+    for g in globals {
+        func.instruction(&Instruction::I32Const(g.offset as i32));
+        match &g.init_value {
+            FieldValue::F32(v) => {
+                func.instruction(&Instruction::F32Const(*v));
+                func.instruction(&Instruction::F32Store(wasm_encoder::MemArg {
+                    offset: 0, align: 2, memory_index: 0,
+                }));
+            }
+            FieldValue::I32(v) => {
+                func.instruction(&Instruction::I32Const(*v));
+                func.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
+                    offset: 0, align: 2, memory_index: 0,
+                }));
+            }
+            FieldValue::Bool(v) => {
+                func.instruction(&Instruction::I32Const(if *v { 1 } else { 0 }));
+                func.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
+                    offset: 0, align: 2, memory_index: 0,
+                }));
+            }
+        }
+    }
 
     // Write static entity template data
     for (entity_idx, entity) in entities.iter().enumerate() {

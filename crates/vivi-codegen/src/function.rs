@@ -16,6 +16,7 @@ pub fn compile_user_fn(
     layout: &MemoryLayout,
     fn_index_map: &HashMap<String, u32>,
     void_fns: &HashSet<String>,
+    globals: &HashMap<String, crate::expr::GlobalVar>,
     source: &str,
     func_mappings: &mut FuncMappings,
 ) -> Function {
@@ -23,7 +24,7 @@ pub fn compile_user_fn(
 
     // ExprCtx with entity_index_local=0 (unused for fns, but harmless)
     let empty_params = vec![];
-    let mut ctx = ExprCtx::new(layout, &empty_params, 0, fn_index_map, void_fns);
+    let mut ctx = ExprCtx::new(layout, &empty_params, 0, fn_index_map, void_fns, globals);
 
     // Pre-populate locals with function parameters (indices 0..param_count)
     for (i, (name, ty)) in sig.params.iter().enumerate() {

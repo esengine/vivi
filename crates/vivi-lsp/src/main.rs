@@ -52,6 +52,9 @@ impl SymbolTable {
                         self.definitions.insert(f.name.clone(), (uri.to_string(), f.span.start, f.span.end));
                     }
                 }
+                Item::Global(g) => {
+                    self.definitions.insert(g.name.clone(), (uri.to_string(), g.span.start, g.span.end));
+                }
             }
         }
     }
@@ -227,7 +230,6 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
                     let uri = params.text_document_position_params.text_document.uri.to_string();
                     let pos = params.text_document_position_params.position;
                     let offset = symbols.position_to_offset(&uri, pos);
-
                     let hover = symbols.word_at_offset(&uri, offset).and_then(|word| {
                         let (def_uri, start, end) = symbols.definitions.get(&word)?;
                         let source = symbols.sources.get(def_uri)?;

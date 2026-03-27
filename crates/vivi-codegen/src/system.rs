@@ -16,12 +16,13 @@ pub fn compile_system(
     layout: &MemoryLayout,
     fn_index_map: &HashMap<String, u32>,
     void_fns: &HashSet<String>,
+    globals: &HashMap<String, crate::expr::GlobalVar>,
     source: &str,
     func_mappings: &mut FuncMappings,
 ) -> Function {
     let is_bare = sys.each_params.is_empty();
     let entity_index_local: u32 = 0;
-    let mut ctx = ExprCtx::new(layout, &sys.each_params, entity_index_local, fn_index_map, void_fns);
+    let mut ctx = ExprCtx::new(layout, &sys.each_params, entity_index_local, fn_index_map, void_fns, globals);
 
     let mut instrs: Vec<Instruction<'static>> = Vec::new();
 
@@ -125,11 +126,17 @@ fn compile_stmt(stmt: &Stmt, ctx: &mut ExprCtx, instrs: &mut Vec<Instruction<'st
             if let Expr::FieldAccess(obj, field, _) = &assign.target {
                 ctx.compile_field_store(obj, field, &assign.value, instrs);
             } else if let Expr::Ident(name, _) = &assign.target {
-                // Local variable assignment
                 if let Some(local) = ctx.locals.get(name) {
                     let index = local.index;
                     ctx.compile_expr(&assign.value, instrs);
                     instrs.push(Instruction::LocalSet(index));
+                } else if let Some(gvar) = ctx.globals.get(name) {
+                    // Global variable assignment: store to memory
+                    let offset = gvar.offset;
+                    let ty = gvar.ty.clone();
+                    instrs.push(Instruction::I32Const(offset as i32));
+                    ctx.compile_expr(&assign.value, instrs);
+                    instrs.push(ctx.store_instr(&ty));
                 } else {
                     panic!("assignment to undefined variable `{name}`");
                 }
@@ -209,7 +216,13 @@ fn infer_expr_ty_simple(expr: &Expr, ctx: &ExprCtx) -> Ty {
         Expr::IntLit(_, _) => Ty::I32,
         Expr::BoolLit(_, _) => Ty::Bool,
         Expr::Ident(name, _) => {
-            ctx.locals.get(name).map_or(Ty::I32, |l| l.ty.clone())
+            if let Some(l) = ctx.locals.get(name) {
+                l.ty.clone()
+            } else if let Some(g) = ctx.globals.get(name) {
+                g.ty.clone()
+            } else {
+                Ty::I32
+            }
         }
         Expr::FieldAccess(obj, field, _) => {
             if let Expr::Ident(param_name, _) = obj.as_ref() {

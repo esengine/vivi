@@ -80,6 +80,14 @@ pub enum FieldValue {
     Bool(bool),
 }
 
+#[derive(Debug, Clone)]
+pub struct GlobalInfo {
+    pub name: String,
+    pub ty: Ty,
+    pub init_value: FieldValue,
+    pub offset: u32, // byte offset in linear memory
+}
+
 #[derive(Debug)]
 pub struct ResolvedProgram {
     pub components: Vec<ComponentInfo>,
@@ -87,6 +95,7 @@ pub struct ResolvedProgram {
     pub functions: Vec<FnSignature>,
     pub extern_fns: Vec<ExternFnInfo>,
     pub entities: Vec<EntityInfo>,
+    pub globals: Vec<GlobalInfo>,
     pub world_init_systems: Vec<String>,
     pub world_systems: Vec<String>,
     pub layout: MemoryLayout,
@@ -136,6 +145,48 @@ pub fn resolve_with_max(program: &Program, source: &str, max_entities: u32) -> R
             );
         }
     }
+
+    // Collect globals
+    let mut globals: Vec<GlobalInfo> = Vec::new();
+    for item in &program.items {
+        if let Item::Global(g) = item {
+            let ty = Ty::from_ast(&g.ty);
+            let init_value = match &g.init_value {
+                vivi_parser::ast::Expr::IntLit(v, _) => FieldValue::I32(*v as i32),
+                vivi_parser::ast::Expr::FloatLit(v, _) => FieldValue::F32(*v as f32),
+                vivi_parser::ast::Expr::BoolLit(v, _) => FieldValue::Bool(*v),
+                vivi_parser::ast::Expr::UnaryOp(vivi_parser::ast::UnaryOp::Neg, inner, _) => {
+                    match inner.as_ref() {
+                        vivi_parser::ast::Expr::IntLit(v, _) => FieldValue::I32(-(*v as i32)),
+                        vivi_parser::ast::Expr::FloatLit(v, _) => FieldValue::F32(-(*v as f32)),
+                        _ => return Err(SemaError {
+                            message: "global initial value must be a literal".into(),
+                            span: g.span.clone(),
+                            label: "expected literal".into(),
+                            source_code: source.to_string(),
+                        }),
+                    }
+                }
+                _ => return Err(SemaError {
+                    message: "global initial value must be a literal".into(),
+                    span: g.span.clone(),
+                    label: "expected literal".into(),
+                    source_code: source.to_string(),
+                }),
+            };
+            globals.push(GlobalInfo {
+                name: g.name.clone(),
+                ty,
+                init_value,
+                offset: 0, // will be set after layout computation
+            });
+        }
+    }
+
+    // Build globals type map for type checking
+    let globals_type_map: HashMap<String, Ty> = globals.iter()
+        .map(|g| (g.name.clone(), g.ty.clone()))
+        .collect();
 
     // Collect extern functions
     for item in &program.items {
@@ -204,6 +255,7 @@ pub fn resolve_with_max(program: &Program, source: &str, max_entities: u32) -> R
                 sig.return_ty.as_ref(),
                 &fn_map,
                 &components,
+                &globals_type_map,
                 source,
             )?;
         }
@@ -257,6 +309,7 @@ pub fn resolve_with_max(program: &Program, source: &str, max_entities: u32) -> R
                     &components,
                     &mut locals,
                     &fn_map,
+                    &globals_type_map,
                     source,
                 )?;
 
@@ -274,6 +327,7 @@ pub fn resolve_with_max(program: &Program, source: &str, max_entities: u32) -> R
                     None,
                     &fn_map,
                     &components,
+                    &globals_type_map,
                     source,
                 )?;
 
@@ -423,7 +477,13 @@ pub fn resolve_with_max(program: &Program, source: &str, max_entities: u32) -> R
         .iter()
         .map(|name| components[name].clone())
         .collect();
-    let layout = MemoryLayout::compute_with_max(&ordered_components, max_entities);
+    let mut layout = MemoryLayout::compute_with_max(&ordered_components, max_entities);
+
+    // Assign memory offsets to globals (after component data)
+    for g in &mut globals {
+        g.offset = layout.total_bytes;
+        layout.total_bytes += g.ty.byte_size();
+    }
 
     Ok(ResolvedProgram {
         components: ordered_components,
@@ -431,6 +491,7 @@ pub fn resolve_with_max(program: &Program, source: &str, max_entities: u32) -> R
         functions,
         extern_fns,
         entities,
+        globals,
         world_init_systems,
         world_systems,
         layout,
@@ -441,6 +502,7 @@ pub fn resolve_with_max(program: &Program, source: &str, max_entities: u32) -> R
 struct TypeCtx<'a> {
     params: &'a [EachParamInfo],
     components: &'a HashMap<String, ComponentInfo>,
+    globals: &'a HashMap<String, Ty>,
     locals: &'a mut HashMap<String, Ty>,
     functions: &'a HashMap<String, FnSignature>,
     return_ty: Option<&'a Ty>,
@@ -453,9 +515,10 @@ fn type_check_body(
     components: &HashMap<String, ComponentInfo>,
     locals: &mut HashMap<String, Ty>,
     functions: &HashMap<String, FnSignature>,
+    globals: &HashMap<String, Ty>,
     source: &str,
 ) -> Result<(), SemaError> {
-    let mut ctx = TypeCtx { params, components, locals, functions, return_ty: None, source };
+    let mut ctx = TypeCtx { params, components, locals, functions, globals, return_ty: None, source };
     check_stmts(stmts, &mut ctx)
 }
 
@@ -465,12 +528,14 @@ fn type_check_fn_body(
     return_ty: Option<&Ty>,
     functions: &HashMap<String, FnSignature>,
     components: &HashMap<String, ComponentInfo>,
+    globals: &HashMap<String, Ty>,
     source: &str,
 ) -> Result<(), SemaError> {
     let empty: Vec<EachParamInfo> = vec![];
     let mut ctx = TypeCtx {
         params: &empty,
         components,
+        globals,
         locals,
         functions,
         return_ty,
@@ -589,6 +654,8 @@ fn infer_type(expr: &Expr, ctx: &TypeCtx) -> Result<Ty, SemaError> {
         Expr::BoolLit(_, _) => Ok(Ty::Bool),
         Expr::Ident(name, span) => {
             if let Some(ty) = ctx.locals.get(name) {
+                Ok(ty.clone())
+            } else if let Some(ty) = ctx.globals.get(name) {
                 Ok(ty.clone())
             } else if ctx.params.iter().any(|p| p.name == *name) {
                 Ok(Ty::Entity) // placeholder for component ref

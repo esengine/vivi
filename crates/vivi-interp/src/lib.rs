@@ -61,6 +61,7 @@ pub struct Interpreter {
     fn_bodies: HashMap<String, Vec<Stmt>>,
     fn_params: HashMap<String, Vec<FnParam>>,
     extern_handlers: HashMap<String, ExternHandler>,
+    globals: HashMap<String, (u32, Ty, FieldValue)>, // name -> (offset, type, init)
     #[allow(dead_code)]
     component_fields: HashMap<String, Vec<(String, Ty)>>,
 }
@@ -106,6 +107,11 @@ impl Interpreter {
             );
         }
 
+        let mut globals_map = HashMap::new();
+        for g in &resolved.globals {
+            globals_map.insert(g.name.clone(), (g.offset, g.ty.clone(), g.init_value.clone()));
+        }
+
         let mut component_fields = HashMap::new();
         for comp in &resolved.components {
             let fields: Vec<(String, Ty)> = comp
@@ -128,6 +134,7 @@ impl Interpreter {
             fn_bodies,
             fn_params,
             extern_handlers: HashMap::new(),
+            globals: globals_map,
             component_fields,
         }
     }
@@ -160,6 +167,20 @@ impl Interpreter {
                             self.memory[addr..addr + 4].copy_from_slice(&val.to_le_bytes());
                         }
                     }
+                }
+            }
+        }
+
+        // Initialize globals
+        let globals_snapshot: Vec<_> = self.globals.values().cloned().collect();
+        for (offset, _ty, init) in &globals_snapshot {
+            let addr = *offset as usize;
+            match init {
+                FieldValue::F32(v) => self.memory[addr..addr+4].copy_from_slice(&v.to_le_bytes()),
+                FieldValue::I32(v) => self.memory[addr..addr+4].copy_from_slice(&v.to_le_bytes()),
+                FieldValue::Bool(v) => {
+                    let val: i32 = if *v { 1 } else { 0 };
+                    self.memory[addr..addr+4].copy_from_slice(&val.to_le_bytes());
                 }
             }
         }
@@ -249,7 +270,21 @@ impl Interpreter {
                         }
                     }
                     Expr::Ident(name, _) => {
-                        locals.insert(name.clone(), value);
+                        if self.globals.contains_key(name) {
+                            let (offset, _, _) = &self.globals[name];
+                            let addr = *offset as usize;
+                            match &value {
+                                Value::F32(v) => self.memory[addr..addr+4].copy_from_slice(&v.to_le_bytes()),
+                                Value::I32(v) => self.memory[addr..addr+4].copy_from_slice(&v.to_le_bytes()),
+                                Value::Bool(v) => {
+                                    let val: i32 = if *v { 1 } else { 0 };
+                                    self.memory[addr..addr+4].copy_from_slice(&val.to_le_bytes());
+                                }
+                                Value::F64(v) => self.memory[addr..addr+8].copy_from_slice(&v.to_le_bytes()),
+                            }
+                        } else {
+                            locals.insert(name.clone(), value);
+                        }
                     }
                     _ => panic!("invalid assignment target"),
                 }
@@ -318,6 +353,14 @@ impl Interpreter {
             Expr::Ident(name, _) => {
                 if let Some(val) = locals.get(name) {
                     val.clone()
+                } else if let Some((offset, ty, _)) = self.globals.get(name) {
+                    let addr = *offset as usize;
+                    match ty {
+                        Ty::F32 => Value::F32(f32::from_le_bytes(self.memory[addr..addr+4].try_into().unwrap())),
+                        Ty::I32 | Ty::Bool | Ty::Entity => Value::I32(i32::from_le_bytes(self.memory[addr..addr+4].try_into().unwrap())),
+                        Ty::F64 => Value::F64(f64::from_le_bytes(self.memory[addr..addr+8].try_into().unwrap())),
+                        Ty::I64 => Value::I32(i64::from_le_bytes(self.memory[addr..addr+8].try_into().unwrap()) as i32),
+                    }
                 } else {
                     Value::I32(entity_idx as i32)
                 }

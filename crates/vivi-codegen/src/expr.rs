@@ -12,6 +12,13 @@ pub struct LocalVar {
     pub ty: Ty,
 }
 
+/// A global variable stored at a fixed memory offset.
+#[derive(Clone)]
+pub struct GlobalVar {
+    pub offset: u32,
+    pub ty: Ty,
+}
+
 /// Context for compiling expressions within a system's `each` body.
 pub struct ExprCtx<'a> {
     pub layout: &'a MemoryLayout,
@@ -21,6 +28,7 @@ pub struct ExprCtx<'a> {
     pub next_local: u32,
     pub fn_index_map: &'a HashMap<String, u32>,
     pub void_fns: &'a HashSet<String>,
+    pub globals: &'a HashMap<String, GlobalVar>,
 }
 
 impl<'a> ExprCtx<'a> {
@@ -30,6 +38,7 @@ impl<'a> ExprCtx<'a> {
         entity_index_local: u32,
         fn_index_map: &'a HashMap<String, u32>,
         void_fns: &'a HashSet<String>,
+        globals: &'a HashMap<String, GlobalVar>,
     ) -> Self {
         Self {
             layout,
@@ -39,6 +48,7 @@ impl<'a> ExprCtx<'a> {
             next_local: entity_index_local + 1,
             fn_index_map,
             void_fns,
+            globals,
         }
     }
 
@@ -65,6 +75,10 @@ impl<'a> ExprCtx<'a> {
             Expr::Ident(name, _) => {
                 if let Some(local) = self.locals.get(name) {
                     instrs.push(Instruction::LocalGet(local.index));
+                } else if let Some(gvar) = self.globals.get(name) {
+                    // Load global from memory
+                    instrs.push(Instruction::I32Const(gvar.offset as i32));
+                    instrs.push(self.load_instr(&gvar.ty));
                 } else if self.params.iter().any(|p| p.name == *name) {
                     instrs.push(Instruction::LocalGet(self.entity_index_local));
                 } else {
@@ -178,7 +192,7 @@ impl<'a> ExprCtx<'a> {
         }
     }
 
-    fn store_instr(&self, ty: &Ty) -> Instruction<'static> {
+    pub fn store_instr(&self, ty: &Ty) -> Instruction<'static> {
         let mem = wasm_encoder::MemArg { offset: 0, align: if ty.byte_size() == 8 { 3 } else { 2 }, memory_index: 0 };
         match ty {
             Ty::F32 => Instruction::F32Store(mem),
@@ -194,7 +208,13 @@ impl<'a> ExprCtx<'a> {
             Expr::FloatLit(_, _) => true,
             Expr::IntLit(_, _) | Expr::BoolLit(_, _) => false,
             Expr::Ident(name, _) => {
-                self.locals.get(name).map_or(false, |l| l.ty.is_float())
+                if let Some(l) = self.locals.get(name) {
+                    l.ty.is_float()
+                } else if let Some(g) = self.globals.get(name) {
+                    g.ty.is_float()
+                } else {
+                    false
+                }
             }
             Expr::FieldAccess(obj, field, _) => {
                 if let Expr::Ident(param_name, _) = obj.as_ref() {

@@ -46,6 +46,7 @@ impl Parser {
             Some(Token::Fn) => Ok(Item::Fn(self.parse_fn_def()?)),
             Some(Token::Extern) => Ok(Item::Extern(self.parse_extern_block()?)),
             Some(Token::EntityKw) => Ok(Item::Entity(self.parse_entity_def()?)),
+            Some(Token::Global) => Ok(Item::Global(self.parse_global()?)),
             Some(other) => Err(self.error(format!("expected top-level item, found `{other}`"))),
             None => Err(self.error_eof("expected top-level item")),
         }
@@ -682,6 +683,23 @@ impl Parser {
         Ok(EntityDef {
             name,
             components,
+            span: start..end,
+        })
+    }
+
+    fn parse_global(&mut self) -> Result<GlobalDef, ParseError> {
+        let start = self.current_span().start;
+        self.expect(Token::Global)?;
+        let name = self.expect_ident()?;
+        self.expect(Token::Colon)?;
+        let ty = self.parse_type()?;
+        self.expect(Token::Eq)?;
+        let init_value = self.parse_expr()?;
+        let end = init_value.span().end;
+        Ok(GlobalDef {
+            name,
+            ty,
+            init_value,
             span: start..end,
         })
     }

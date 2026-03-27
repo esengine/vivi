@@ -15,6 +15,15 @@ pub enum Item {
     Fn(FnDef),
     Extern(ExternBlock),
     Entity(EntityDef),
+    Global(GlobalDef),
+}
+
+#[derive(Debug, Clone)]
+pub struct GlobalDef {
+    pub name: String,
+    pub ty: TypeName,
+    pub init_value: Expr,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
