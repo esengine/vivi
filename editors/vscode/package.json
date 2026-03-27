@@ -1,13 +1,15 @@
 {
   "name": "vivi-lang",
   "displayName": "Vivi Language",
-  "description": "Syntax highlighting for the Vivi ECS language",
+  "description": "Language support for Vivi ECS language — syntax highlighting, go-to-definition, hover",
   "version": "0.1.0",
   "publisher": "vivi",
   "engines": {
     "vscode": "^1.75.0"
   },
   "categories": ["Programming Languages"],
+  "main": "./extension.js",
+  "activationEvents": ["onLanguage:vivi"],
   "contributes": {
     "languages": [
       {
@@ -23,6 +25,16 @@
         "scopeName": "source.vivi",
         "path": "../vivi.tmLanguage.json"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Vivi",
+      "properties": {
+        "vivi.lspPath": {
+          "type": "string",
+          "default": "vivi-lsp",
+          "description": "Path to vivi-lsp executable"
+        }
+      }
+    }
   }
 }

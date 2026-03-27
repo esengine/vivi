@@ -1,0 +1,15 @@
+[package]
+name = "vivi-lsp"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "vivi-lsp"
+path = "src/main.rs"
+
+[dependencies]
+vivi-lexer = { path = "../vivi-lexer" }
+vivi-parser = { path = "../vivi-parser" }
+lsp-server = { workspace = true }
+lsp-types = { workspace = true }
+serde_json = { workspace = true }
