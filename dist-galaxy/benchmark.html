@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Vivi vs JavaScript — Pure Computation Benchmark</title>
+<style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0a0a1a; color: #e0e0e0; font-family: monospace; padding: 2rem; max-width: 600px; margin: 0 auto; }
+    h1 { color: #818cf8; text-align: center; margin-bottom: 0.25rem; }
+    .sub { text-align: center; color: #888; margin-bottom: 1.5rem; font-size: 0.8rem; }
+    table { width: 100%; border-collapse: collapse; margin: 0.75rem 0; }
+    th, td { padding: 0.4rem 0.8rem; text-align: right; border-bottom: 1px solid #222; }
+    th { color: #888; text-align: left; }
+    td.label { text-align: left; }
+    .vivi { color: #4ade80; }
+    .js { color: #fbbf24; }
+    .controls { text-align: center; margin: 1rem 0; }
+    button { background: #333; color: #e0e0e0; border: 1px solid #555; padding: 0.5rem 1.2rem; cursor: pointer; font-family: monospace; margin: 0 0.25rem; }
+    button:hover { background: #555; }
+    #status { text-align: center; margin: 1rem 0; font-size: 1.1rem; min-height: 1.5rem; }
+    .result-header { font-size: 1.2rem; text-align: center; margin: 1rem 0; }
+</style>
+</head>
+<body>
+<h1>Vivi (WASM) vs JavaScript</h1>
+<div class="sub">
+    Pure computation only: gravity + movement, no rendering, no host calls<br>
+    Same algorithm, same SoA data layout, each runs alone, 1000 iterations
+</div>
+<div class="controls">
+    <button onclick="run(1000)">1,000</button>
+    <button onclick="run(5000)">5,000</button>
+    <button onclick="run(10000)">10,000</button>
+    <span style="color:#555">|</span>
+    <input id="custom-count" type="number" value="50000" min="100" max="10000000" step="1000"
+        style="background:#222;color:#e0e0e0;border:1px solid #555;padding:0.4rem 0.6rem;width:8rem;font-family:monospace;text-align:right">
+    <button onclick="run(parseInt(document.getElementById('custom-count').value))">Run</button>
+</div>
+<div id="status"></div>
+<div id="results"></div>
+
+<script>
+const W = 600, H = 400, MAX = 1000000;
+let wasm = null;
+
+// ============ JS: Same algorithm as galaxy-bench.vivi ============
+const jsPX = new Float32Array(MAX), jsPY = new Float32Array(MAX);
+const jsVX = new Float32Array(MAX), jsVY = new Float32Array(MAX);
+
+function jsInit(n) {
+    for (let i = 0; i < n; i++) {
+        jsPX[i] = Math.random() * W;
+        jsPY[i] = Math.random() * H;
+        jsVX[i] = Math.random() * 2 - 1;
+        jsVY[i] = Math.random() * 2 - 1;
+    }
+}
+
+function wrap(v, max) {
+    if (v > max) return v - max;
+    if (v < 0) return v + max;
+    return v;
+}
+
+function jsTick(n) {
+    // Gravity (same as Vivi Gravity system)
+    for (let i = 0; i < n; i++) {
+        const dx = 300 - jsPX[i];
+        const dy = 200 - jsPY[i];
+        const distSq = dx * dx + dy * dy + 100;
+        const force = 80 / distSq;
+        jsVX[i] = (jsVX[i] + dx * force) * 0.999;
+        jsVY[i] = (jsVY[i] + dy * force) * 0.999;
+    }
+    // Movement (same as Vivi Movement system)
+    for (let i = 0; i < n; i++) {
+        jsPX[i] = wrap(jsPX[i] + jsVX[i], W);
+        jsPY[i] = wrap(jsPY[i] + jsVY[i], H);
+    }
+}
+
+// ============ Vivi WASM (bench.wasm — zero host calls) ============
+function viviInit(n) {
+    const mem = new DataView(wasm.exports.memory.buffer);
+    mem.setInt32(0, n, true);
+    const pxO = 4, pyO = 4+MAX*4, vxO = 4+MAX*8, vyO = 4+MAX*12;
+    for (let i = 0; i < n; i++) {
+        const o = i * 4;
+        mem.setFloat32(pxO+o, Math.random()*W, true);
+        mem.setFloat32(pyO+o, Math.random()*H, true);
+        mem.setFloat32(vxO+o, Math.random()*2-1, true);
+        mem.setFloat32(vyO+o, Math.random()*2-1, true);
+    }
+}
+
+// ============ Benchmark ============
+async function loadWasm() {
+    if (wasm) return;
+    const bytes = await (await fetch('bench.wasm')).arrayBuffer();
+    const { instance } = await WebAssembly.instantiate(bytes);
+    wasm = instance;
+}
+
+function bench(fn, iters) {
+    const times = new Float64Array(iters);
+    for (let i = 0; i < iters; i++) {
+        const t0 = performance.now();
+        fn();
+        times[i] = performance.now() - t0;
+    }
+    return times;
+}
+
+function analyze(times) {
+    const sorted = new Float64Array(times).sort();
+    const sum = sorted.reduce((a, b) => a + b, 0);
+    return {
+        avg: sum / sorted.length,
+        p50: sorted[Math.floor(sorted.length * 0.5)],
+        p95: sorted[Math.floor(sorted.length * 0.95)],
+        min: sorted[0],
+        max: sorted[sorted.length - 1],
+        count: sorted.length,
+    };
+}
+
+function fmt(ms) {
+    if (ms < 0.001) return (ms * 1000).toFixed(1) + ' μs';
+    return ms.toFixed(3) + ' ms';
+}
+
+async function run(n) {
+    const status = document.getElementById('status');
+    const resultsDiv = document.getElementById('results');
+    resultsDiv.innerHTML = '';
+
+    await loadWasm();
+
+    const ITERS = 1000;
+    const WARM = 100;
+
+    // ---- Warmup + Benchmark Vivi ----
+    status.innerHTML = `<span class="vivi">Benchmarking Vivi WASM (${n.toLocaleString()} entities)...</span>`;
+    await new Promise(r => setTimeout(r, 50));
+
+    viviInit(n);
+    for (let i = 0; i < WARM; i++) wasm.exports.tick();
+    const viviTimes = bench(() => wasm.exports.tick(), ITERS);
+    const vs = analyze(viviTimes);
+
+    // ---- Warmup + Benchmark JS ----
+    status.innerHTML = `<span class="js">Benchmarking JavaScript (${n.toLocaleString()} entities)...</span>`;
+    await new Promise(r => setTimeout(r, 50));
+
+    jsInit(n);
+    for (let i = 0; i < WARM; i++) jsTick(n);
+    const jsTimes = bench(() => jsTick(n), ITERS);
+    const js = analyze(jsTimes);
+
+    // ---- Results ----
+    const ratio = js.avg / vs.avg;
+    const winner = ratio > 1 ? 'Vivi' : 'JavaScript';
+    const factor = (ratio > 1 ? ratio : 1 / ratio).toFixed(2);
+    const wClass = ratio > 1 ? 'vivi' : 'js';
+
+    const nsPerEntityVivi = ((vs.avg * 1000000) / n).toFixed(1);
+    const nsPerEntityJs = ((js.avg * 1000000) / n).toFixed(1);
+
+    status.innerHTML = '';
+    resultsDiv.innerHTML = `
+        <div class="result-header">
+            <span class="${wClass}">${winner} is ${factor}x faster</span>
+        </div>
+        <table>
+            <tr><th></th><th class="vivi">Vivi (WASM)</th><th class="js">JavaScript</th></tr>
+            <tr><td class="label">Entities</td><td colspan="2" style="text-align:center">${n.toLocaleString()}</td></tr>
+            <tr><td class="label">Avg / tick</td><td class="vivi">${fmt(vs.avg)}</td><td class="js">${fmt(js.avg)}</td></tr>
+            <tr><td class="label">P50 / tick</td><td class="vivi">${fmt(vs.p50)}</td><td class="js">${fmt(js.p50)}</td></tr>
+            <tr><td class="label">P95 / tick</td><td class="vivi">${fmt(vs.p95)}</td><td class="js">${fmt(js.p95)}</td></tr>
+            <tr><td class="label">Min / tick</td><td class="vivi">${fmt(vs.min)}</td><td class="js">${fmt(js.min)}</td></tr>
+            <tr><td class="label">ns / entity</td><td class="vivi">${nsPerEntityVivi}</td><td class="js">${nsPerEntityJs}</td></tr>
+            <tr><td class="label">Iterations</td><td colspan="2" style="text-align:center">${ITERS} (+ ${WARM} warmup)</td></tr>
+        </table>
+        <p style="text-align:center;color:#555;margin-top:1rem;font-size:0.8rem">
+            Pure computation: gravity + movement. No rendering, no host function calls.<br>
+            JS uses SoA + Float32Array (optimized). Same algorithm, same two-pass loop structure.
+        </p>`;
+}
+</script>
+</body>
+</html>

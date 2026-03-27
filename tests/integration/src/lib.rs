@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use vivi_sema::layout::MAX_ENTITIES;
+    use vivi_sema::layout::DEFAULT_MAX_ENTITIES as MAX_ENTITIES;
     use wasmtime::*;
 
     fn compile_vivi(source: &str) -> Vec<u8> {

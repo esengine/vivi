@@ -34,6 +34,10 @@ enum Commands {
         /// Build target: "wasm" (default) or "web" (generates .wasm + runtime.js + index.html)
         #[arg(long, default_value = "wasm")]
         target: String,
+
+        /// Maximum number of entities (determines memory allocation)
+        #[arg(long, default_value = "1000000")]
+        max_entities: u32,
     },
 
     /// Run a .vivi file with the interpreter
@@ -53,6 +57,7 @@ enum Commands {
 
 fn parse_and_resolve(
     input: &PathBuf,
+    max_entities: u32,
 ) -> miette::Result<(String, vivi_parser::ast::Program, vivi_sema::ResolvedProgram)> {
     let source = std::fs::read_to_string(input)
         .into_diagnostic()
@@ -61,7 +66,7 @@ fn parse_and_resolve(
     let program =
         vivi_parser::parse(&source).map_err(|e| miette::miette!("{e}"))?;
 
-    let resolved = vivi_sema::resolve(&program, &source)
+    let resolved = vivi_sema::resolve_with_max(&program, &source, max_entities)
         .map_err(|e| miette::Report::new(e))?;
 
     Ok((source, program, resolved))
@@ -71,8 +76,8 @@ fn main() -> miette::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Build { input, output, target } => {
-            let (source, program, resolved) = parse_and_resolve(&input)?;
+        Commands::Build { input, output, target, max_entities } => {
+            let (source, program, resolved) = parse_and_resolve(&input, max_entities)?;
 
             if target == "web" {
                 // --target web: generate dist/ with .wasm + source map + runtime.js + index.html
@@ -150,7 +155,7 @@ fn main() -> miette::Result<()> {
             ticks,
             dump_state,
         } => {
-            let (_source, program, resolved) = parse_and_resolve(&input)?;
+            let (_source, program, resolved) = parse_and_resolve(&input, vivi_sema::layout::DEFAULT_MAX_ENTITIES)?;
 
             let mut interp = Interpreter::new(&program, &resolved);
 

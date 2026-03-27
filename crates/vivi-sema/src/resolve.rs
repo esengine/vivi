@@ -93,6 +93,10 @@ pub struct ResolvedProgram {
 }
 
 pub fn resolve(program: &Program, source: &str) -> Result<ResolvedProgram, SemaError> {
+    resolve_with_max(program, source, crate::layout::DEFAULT_MAX_ENTITIES)
+}
+
+pub fn resolve_with_max(program: &Program, source: &str, max_entities: u32) -> Result<ResolvedProgram, SemaError> {
     let mut components: HashMap<String, ComponentInfo> = HashMap::new();
     let mut functions: Vec<FnSignature> = Vec::new();
     let mut extern_fns: Vec<ExternFnInfo> = Vec::new();
@@ -419,7 +423,7 @@ pub fn resolve(program: &Program, source: &str) -> Result<ResolvedProgram, SemaE
         .iter()
         .map(|name| components[name].clone())
         .collect();
-    let layout = MemoryLayout::compute(&ordered_components);
+    let layout = MemoryLayout::compute_with_max(&ordered_components, max_entities);
 
     Ok(ResolvedProgram {
         components: ordered_components,

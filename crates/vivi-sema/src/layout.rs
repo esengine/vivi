@@ -1,7 +1,7 @@
 use crate::resolve::ComponentInfo;
 use crate::types::Ty;
 
-pub const MAX_ENTITIES: u32 = 10000;
+pub const DEFAULT_MAX_ENTITIES: u32 = 1_000_000;
 
 /// Describes where a component field's SoA array lives in linear memory.
 #[derive(Debug, Clone)]
@@ -33,6 +33,10 @@ impl MemoryLayout {
     ///   [0..4]  entity_count: i32
     ///   [4..]   field arrays, each MAX_ENTITIES * element_size bytes
     pub fn compute(components: &[ComponentInfo]) -> Self {
+        Self::compute_with_max(components, DEFAULT_MAX_ENTITIES)
+    }
+
+    pub fn compute_with_max(components: &[ComponentInfo], max_entities: u32) -> Self {
         let entity_count_offset = 0u32;
         let mut offset = 4u32; // after entity_count
 
@@ -47,7 +51,7 @@ impl MemoryLayout {
                     offset,
                     element_size,
                 });
-                offset += MAX_ENTITIES * element_size;
+                offset += max_entities * element_size;
             }
             comp_layouts.push(ComponentLayout {
                 name: comp.name.clone(),

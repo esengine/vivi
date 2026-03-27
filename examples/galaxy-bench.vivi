@@ -1,0 +1,48 @@
+component Position {
+    x: f32
+    y: f32
+}
+
+component Velocity {
+    dx: f32
+    dy: f32
+}
+
+fn wrap(value: f32, max: f32) -> f32 {
+    if value > max { return value - max }
+    if value < 0.0 { return value + max }
+    return value
+}
+
+system Gravity {
+    query {
+        write Velocity
+        read Position
+    }
+    each(vel: Velocity, pos: Position) {
+        let dx: f32 = 300.0 - pos.x
+        let dy: f32 = 200.0 - pos.y
+        let dist_sq: f32 = dx * dx + dy * dy + 100.0
+        let force: f32 = 80.0 / dist_sq
+        vel.dx = (vel.dx + dx * force) * 0.999
+        vel.dy = (vel.dy + dy * force) * 0.999
+    }
+}
+
+system Movement {
+    query {
+        write Position
+        read Velocity
+    }
+    each(pos: Position, vel: Velocity) {
+        pos.x = wrap(pos.x + vel.dx, 600.0)
+        pos.y = wrap(pos.y + vel.dy, 400.0)
+    }
+}
+
+world Bench {
+    systems {
+        Gravity
+        Movement
+    }
+}
