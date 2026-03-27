@@ -1,4 +1,5 @@
 use crate::resolve::ComponentInfo;
+use crate::types::Ty;
 
 pub const MAX_ENTITIES: u32 = 10000;
 
@@ -6,6 +7,7 @@ pub const MAX_ENTITIES: u32 = 10000;
 #[derive(Debug, Clone)]
 pub struct FieldLayout {
     pub name: String,
+    pub ty: Ty,
     pub offset: u32,       // byte offset from memory start
     pub element_size: u32, // bytes per element (4 for f32/i32, 8 for f64/i64)
 }
@@ -41,6 +43,7 @@ impl MemoryLayout {
                 let element_size = field.ty.byte_size();
                 field_layouts.push(FieldLayout {
                     name: field.name.clone(),
+                    ty: field.ty.clone(),
                     offset,
                     element_size,
                 });

@@ -132,10 +132,12 @@ pub fn resolve(program: &Program, source: &str) -> Result<ResolvedProgram, SemaE
             }
 
             // Type check each body
+            let mut locals = HashMap::new();
             type_check_body(
                 &sys.each.body,
                 &each_params,
                 &components,
+                &mut locals,
                 source,
             )?;
 
@@ -183,37 +185,61 @@ fn type_check_body(
     stmts: &[Stmt],
     params: &[EachParamInfo],
     components: &HashMap<String, ComponentInfo>,
+    locals: &mut HashMap<String, Ty>,
     source: &str,
 ) -> Result<(), SemaError> {
     for stmt in stmts {
         match stmt {
             Stmt::Assign(assign) => {
-                let _lhs_ty = infer_expr_type(&assign.target, params, components, source)?;
-                let _rhs_ty = infer_expr_type(&assign.value, params, components, source)?;
-                // For Phase 1, just check both sides type-check.
-                // Full type compatibility checking can come later.
+                let lhs_ty = infer_expr_type(&assign.target, params, components, locals, source)?;
+                let rhs_ty = infer_expr_type(&assign.value, params, components, locals, source)?;
+                if lhs_ty != rhs_ty {
+                    return Err(SemaError {
+                        message: format!(
+                            "type mismatch in assignment: expected `{lhs_ty}`, found `{rhs_ty}`"
+                        ),
+                        span: assign.span.clone(),
+                        label: format!("expected `{lhs_ty}`"),
+                        source_code: source.to_string(),
+                    });
+                }
             }
             Stmt::Let(let_stmt) => {
-                let _ty = infer_expr_type(&let_stmt.value, params, components, source)?;
+                let val_ty = infer_expr_type(&let_stmt.value, params, components, locals, source)?;
+                let ty = if let Some(ast_ty) = &let_stmt.ty {
+                    let declared = Ty::from_ast(ast_ty);
+                    if declared != val_ty {
+                        return Err(SemaError {
+                            message: format!(
+                                "type mismatch in let: declared `{declared}`, value is `{val_ty}`"
+                            ),
+                            span: let_stmt.span.clone(),
+                            label: format!("expected `{declared}`"),
+                            source_code: source.to_string(),
+                        });
+                    }
+                    declared
+                } else {
+                    val_ty
+                };
+                locals.insert(let_stmt.name.clone(), ty);
             }
             Stmt::If(if_stmt) => {
-                let _cond_ty =
-                    infer_expr_type(&if_stmt.condition, params, components, source)?;
-                type_check_body(&if_stmt.then_body, params, components, source)?;
+                infer_expr_type(&if_stmt.condition, params, components, locals, source)?;
+                type_check_body(&if_stmt.then_body, params, components, locals, source)?;
                 if let Some(else_body) = &if_stmt.else_body {
-                    type_check_body(else_body, params, components, source)?;
+                    type_check_body(else_body, params, components, locals, source)?;
                 }
             }
             Stmt::While(while_stmt) => {
-                let _cond_ty =
-                    infer_expr_type(&while_stmt.condition, params, components, source)?;
-                type_check_body(&while_stmt.body, params, components, source)?;
+                infer_expr_type(&while_stmt.condition, params, components, locals, source)?;
+                type_check_body(&while_stmt.body, params, components, locals, source)?;
             }
             Stmt::Expr(expr) => {
-                let _ty = infer_expr_type(expr, params, components, source)?;
+                infer_expr_type(expr, params, components, locals, source)?;
             }
             Stmt::Return(Some(expr), _) => {
-                let _ty = infer_expr_type(expr, params, components, source)?;
+                infer_expr_type(expr, params, components, locals, source)?;
             }
             Stmt::Return(None, _) => {}
         }
@@ -225,6 +251,7 @@ fn infer_expr_type(
     expr: &Expr,
     params: &[EachParamInfo],
     components: &HashMap<String, ComponentInfo>,
+    locals: &HashMap<String, Ty>,
     source: &str,
 ) -> Result<Ty, SemaError> {
     match expr {
@@ -232,10 +259,12 @@ fn infer_expr_type(
         Expr::FloatLit(_, _) => Ok(Ty::F32),
         Expr::BoolLit(_, _) => Ok(Ty::Bool),
         Expr::Ident(name, span) => {
-            // Check if it's an each parameter
-            if params.iter().any(|p| p.name == *name) {
-                // Component reference - this is a struct, but we'll handle it in field access
-                Ok(Ty::I32) // placeholder; actual type resolved at field access
+            if let Some(ty) = locals.get(name) {
+                Ok(ty.clone())
+            } else if params.iter().any(|p| p.name == *name) {
+                // Component reference — not a usable value by itself, only via field access.
+                // Return a placeholder; field access resolves the real type.
+                Ok(Ty::Entity)
             } else {
                 Err(SemaError {
                     message: format!("undefined variable `{name}`"),
@@ -247,14 +276,14 @@ fn infer_expr_type(
         }
         Expr::FieldAccess(obj, field, span) => {
             if let Expr::Ident(param_name, _) = obj.as_ref() {
-                let param = params.iter().find(|p| p.name == *param_name);
-                if let Some(param) = param {
+                // Check component params first
+                if let Some(param) = params.iter().find(|p| p.name == *param_name) {
                     let comp = &components[&param.component];
                     let field_info = comp.fields.iter().find(|f| f.name == *field);
                     if let Some(fi) = field_info {
-                        Ok(fi.ty.clone())
+                        return Ok(fi.ty.clone());
                     } else {
-                        Err(SemaError {
+                        return Err(SemaError {
                             message: format!(
                                 "component `{}` has no field `{field}`",
                                 param.component
@@ -262,16 +291,15 @@ fn infer_expr_type(
                             span: span.clone(),
                             label: "no such field".into(),
                             source_code: source.to_string(),
-                        })
+                        });
                     }
-                } else {
-                    Err(SemaError {
-                        message: format!("undefined variable `{param_name}`"),
-                        span: span.clone(),
-                        label: "not found".into(),
-                        source_code: source.to_string(),
-                    })
                 }
+                Err(SemaError {
+                    message: format!("undefined variable `{param_name}`"),
+                    span: span.clone(),
+                    label: "not found".into(),
+                    source_code: source.to_string(),
+                })
             } else {
                 Err(SemaError {
                     message: "field access only supported on component parameters".into(),
@@ -282,12 +310,11 @@ fn infer_expr_type(
             }
         }
         Expr::BinOp(left, op, right, span) => {
-            let left_ty = infer_expr_type(left, params, components, source)?;
-            let right_ty = infer_expr_type(right, params, components, source)?;
+            let left_ty = infer_expr_type(left, params, components, locals, source)?;
+            let right_ty = infer_expr_type(right, params, components, locals, source)?;
             match op {
                 BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
                     if left_ty.is_numeric() && right_ty.is_numeric() {
-                        // Use the "wider" type
                         if left_ty == right_ty {
                             Ok(left_ty)
                         } else if left_ty.is_float() || right_ty.is_float() {
@@ -297,7 +324,7 @@ fn infer_expr_type(
                                 Ty::F32
                             })
                         } else {
-                            Ok(left_ty) // both integer, use left
+                            Ok(left_ty)
                         }
                     } else {
                         Err(SemaError {
@@ -316,7 +343,7 @@ fn infer_expr_type(
             }
         }
         Expr::UnaryOp(op, inner, _span) => {
-            let ty = infer_expr_type(inner, params, components, source)?;
+            let ty = infer_expr_type(inner, params, components, locals, source)?;
             match op {
                 UnaryOp::Neg => Ok(ty),
                 UnaryOp::Not => Ok(Ty::Bool),

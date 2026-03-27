@@ -183,4 +183,228 @@ world Game {
         assert!((x1 - 97.0).abs() < 1e-6, "entity 1 x: expected 97.0, got {x1}");
         assert!((y1 - 194.0).abs() < 1e-6, "entity 1 y: expected 194.0, got {y1}");
     }
+
+    #[test]
+    fn test_mixed_i32_f32_fields() {
+        // Component with both i32 and f32 fields
+        let source = r#"
+component Stats {
+    health: i32
+    speed: f32
+}
+
+system Regen {
+    query {
+        write Stats
+    }
+    each(s: Stats) {
+        s.health = s.health + 1
+        s.speed = s.speed + 0.5
+    }
+}
+
+world Game {
+    systems {
+        Regen
+    }
+}
+"#;
+        let wasm_bytes = compile_vivi(source);
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm_bytes).unwrap();
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).unwrap();
+
+        let init = instance.get_typed_func::<(), ()>(&mut store, "init").unwrap();
+        let tick = instance.get_typed_func::<(), ()>(&mut store, "tick").unwrap();
+        let memory = instance.get_memory(&mut store, "memory").unwrap();
+
+        init.call(&mut store, ()).unwrap();
+
+        let health_off = 4usize;
+        let speed_off = 4 + (MAX_ENTITIES as usize) * 4;
+
+        let data = memory.data_mut(&mut store);
+        data[0..4].copy_from_slice(&1i32.to_le_bytes());
+        data[health_off..health_off + 4].copy_from_slice(&100i32.to_le_bytes());
+        data[speed_off..speed_off + 4].copy_from_slice(&3.0f32.to_le_bytes());
+
+        tick.call(&mut store, ()).unwrap();
+        tick.call(&mut store, ()).unwrap();
+
+        let data = memory.data(&store);
+        let health = i32::from_le_bytes(data[health_off..health_off + 4].try_into().unwrap());
+        let speed = f32::from_le_bytes(data[speed_off..speed_off + 4].try_into().unwrap());
+
+        assert_eq!(health, 102, "expected health=102, got {health}");
+        assert!((speed - 4.0).abs() < 1e-6, "expected speed=4.0, got {speed}");
+    }
+
+    #[test]
+    fn test_let_local_variable() {
+        // Use let to store intermediate value
+        let source = r#"
+component Position {
+    x: f32
+    y: f32
+}
+
+component Velocity {
+    dx: f32
+    dy: f32
+}
+
+system ScaledMovement {
+    query {
+        write Position
+        read Velocity
+    }
+    each(pos: Position, vel: Velocity) {
+        let scale: f32 = 2.0
+        pos.x = pos.x + vel.dx * scale
+        pos.y = pos.y + vel.dy * scale
+    }
+}
+
+world Game {
+    systems {
+        ScaledMovement
+    }
+}
+"#;
+        let wasm_bytes = compile_vivi(source);
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm_bytes).unwrap();
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).unwrap();
+
+        let init = instance.get_typed_func::<(), ()>(&mut store, "init").unwrap();
+        let tick = instance.get_typed_func::<(), ()>(&mut store, "tick").unwrap();
+        let memory = instance.get_memory(&mut store, "memory").unwrap();
+
+        init.call(&mut store, ()).unwrap();
+
+        let pos_x_off = 4usize;
+        let pos_y_off = 4 + (MAX_ENTITIES as usize) * 4;
+        let vel_dx_off = 4 + (MAX_ENTITIES as usize) * 8;
+        let vel_dy_off = 4 + (MAX_ENTITIES as usize) * 12;
+
+        let data = memory.data_mut(&mut store);
+        data[0..4].copy_from_slice(&1i32.to_le_bytes());
+        data[pos_x_off..pos_x_off + 4].copy_from_slice(&10.0f32.to_le_bytes());
+        data[pos_y_off..pos_y_off + 4].copy_from_slice(&20.0f32.to_le_bytes());
+        data[vel_dx_off..vel_dx_off + 4].copy_from_slice(&3.0f32.to_le_bytes());
+        data[vel_dy_off..vel_dy_off + 4].copy_from_slice(&5.0f32.to_le_bytes());
+
+        tick.call(&mut store, ()).unwrap();
+
+        let data = memory.data(&store);
+        let x = f32::from_le_bytes(data[pos_x_off..pos_x_off + 4].try_into().unwrap());
+        let y = f32::from_le_bytes(data[pos_y_off..pos_y_off + 4].try_into().unwrap());
+
+        // 10 + 3*2 = 16, 20 + 5*2 = 30
+        assert!((x - 16.0).abs() < 1e-6, "expected x=16.0, got {x}");
+        assert!((y - 30.0).abs() < 1e-6, "expected y=30.0, got {y}");
+    }
+
+    #[test]
+    fn test_while_loop() {
+        // Use while to add velocity multiple times within one tick
+        let source = r#"
+component Position {
+    x: f32
+    y: f32
+}
+
+component Counter {
+    steps: i32
+    unused: i32
+}
+
+system StepMovement {
+    query {
+        write Position
+        write Counter
+    }
+    each(pos: Position, cnt: Counter) {
+        let i: i32 = 0
+        while i < cnt.steps {
+            pos.x = pos.x + 1.0
+            i = i + 1
+        }
+    }
+}
+
+world Game {
+    systems {
+        StepMovement
+    }
+}
+"#;
+        let wasm_bytes = compile_vivi(source);
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm_bytes).unwrap();
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).unwrap();
+
+        let init = instance.get_typed_func::<(), ()>(&mut store, "init").unwrap();
+        let tick = instance.get_typed_func::<(), ()>(&mut store, "tick").unwrap();
+        let memory = instance.get_memory(&mut store, "memory").unwrap();
+
+        init.call(&mut store, ()).unwrap();
+
+        let pos_x_off = 4usize;
+        let pos_y_off = 4 + (MAX_ENTITIES as usize) * 4;
+        let counter_steps_off = 4 + (MAX_ENTITIES as usize) * 8;
+        let counter_unused_off = 4 + (MAX_ENTITIES as usize) * 12;
+
+        let data = memory.data_mut(&mut store);
+        data[0..4].copy_from_slice(&1i32.to_le_bytes());
+        data[pos_x_off..pos_x_off + 4].copy_from_slice(&0.0f32.to_le_bytes());
+        data[pos_y_off..pos_y_off + 4].copy_from_slice(&0.0f32.to_le_bytes());
+        data[counter_steps_off..counter_steps_off + 4].copy_from_slice(&5i32.to_le_bytes());
+        data[counter_unused_off..counter_unused_off + 4].copy_from_slice(&0i32.to_le_bytes());
+
+        tick.call(&mut store, ()).unwrap();
+
+        let data = memory.data(&store);
+        let x = f32::from_le_bytes(data[pos_x_off..pos_x_off + 4].try_into().unwrap());
+
+        assert!((x - 5.0).abs() < 1e-6, "expected x=5.0, got {x}");
+    }
+
+    #[test]
+    fn test_type_mismatch_rejected() {
+        // Assignment f32 = i32 should fail at sema
+        let source = r#"
+component Position {
+    x: f32
+    y: f32
+}
+
+system Bad {
+    query {
+        write Position
+    }
+    each(pos: Position) {
+        pos.x = 42
+    }
+}
+
+world Game {
+    systems {
+        Bad
+    }
+}
+"#;
+        let program = vivi_parser::parse(source).expect("parse failed");
+        let result = vivi_sema::resolve(&program, source);
+        assert!(result.is_err(), "expected type mismatch error");
+        let err = result.unwrap_err();
+        assert!(
+            err.message.contains("type mismatch"),
+            "expected 'type mismatch' in error, got: {}",
+            err.message
+        );
+    }
 }
