@@ -43,6 +43,7 @@ impl Parser {
             Some(Token::Component) => Ok(Item::Component(self.parse_component()?)),
             Some(Token::System) => Ok(Item::System(self.parse_system()?)),
             Some(Token::World) => Ok(Item::World(self.parse_world()?)),
+            Some(Token::Fn) => Ok(Item::Fn(self.parse_fn_def()?)),
             Some(other) => Err(self.error(format!("expected top-level item, found `{other}`"))),
             None => Err(self.error_eof("expected top-level item")),
         }
@@ -444,7 +445,23 @@ impl Parser {
             }
             Some(Token::Ident(_)) => {
                 if let Token::Ident(name) = self.advance().token {
-                    Ok(Expr::Ident(name, self.previous_span()))
+                    let start = self.previous_span().start;
+                    // Check for function call: ident(
+                    if self.check(&Token::LParen) {
+                        self.advance(); // consume (
+                        let mut args = Vec::new();
+                        while !self.check(&Token::RParen) {
+                            args.push(self.parse_expr()?);
+                            if self.check(&Token::Comma) {
+                                self.advance();
+                            }
+                        }
+                        self.expect(Token::RParen)?;
+                        let end = self.previous_span().end;
+                        Ok(Expr::Call(name, args, start..end))
+                    } else {
+                        Ok(Expr::Ident(name, self.previous_span()))
+                    }
                 } else {
                     unreachable!()
                 }
@@ -488,6 +505,52 @@ impl Parser {
             }
             _ => Err(self.error("expected type".into())),
         }
+    }
+
+    fn parse_fn_def(&mut self) -> Result<FnDef, ParseError> {
+        let start = self.current_span().start;
+        self.expect(Token::Fn)?;
+        let name = self.expect_ident()?;
+        self.expect(Token::LParen)?;
+
+        let mut params = Vec::new();
+        while !self.check(&Token::RParen) {
+            let param_start = self.current_span().start;
+            let param_name = self.expect_ident()?;
+            self.expect(Token::Colon)?;
+            let ty = self.parse_type()?;
+            let param_end = self.previous_span().end;
+            params.push(FnParam {
+                name: param_name,
+                ty,
+                span: param_start..param_end,
+            });
+            if self.check(&Token::Comma) {
+                self.advance();
+            }
+        }
+        self.expect(Token::RParen)?;
+
+        let return_ty = if self.check(&Token::Arrow) {
+            self.advance();
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+
+        self.expect(Token::LBrace)?;
+        self.skip_newlines();
+        let body = self.parse_block_body()?;
+        self.expect(Token::RBrace)?;
+        let end = self.previous_span().end;
+
+        Ok(FnDef {
+            name,
+            params,
+            return_ty,
+            body,
+            span: start..end,
+        })
     }
 
     fn parse_world(&mut self) -> Result<WorldDef, ParseError> {

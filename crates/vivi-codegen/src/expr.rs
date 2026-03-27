@@ -19,16 +19,23 @@ pub struct ExprCtx<'a> {
     pub entity_index_local: u32,
     pub locals: HashMap<String, LocalVar>,
     pub next_local: u32,
+    pub fn_index_map: &'a HashMap<String, u32>,
 }
 
 impl<'a> ExprCtx<'a> {
-    pub fn new(layout: &'a MemoryLayout, params: &'a [EachParamInfo], entity_index_local: u32) -> Self {
+    pub fn new(
+        layout: &'a MemoryLayout,
+        params: &'a [EachParamInfo],
+        entity_index_local: u32,
+        fn_index_map: &'a HashMap<String, u32>,
+    ) -> Self {
         Self {
             layout,
             params,
             entity_index_local,
             locals: HashMap::new(),
             next_local: entity_index_local + 1,
+            fn_index_map,
         }
     }
 
@@ -63,6 +70,13 @@ impl<'a> ExprCtx<'a> {
             }
             Expr::FieldAccess(obj, field, _) => {
                 self.compile_field_load(obj, field, instrs);
+            }
+            Expr::Call(name, args, _) => {
+                for arg in args {
+                    self.compile_expr(arg, instrs);
+                }
+                let idx = self.fn_index_map[name];
+                instrs.push(Instruction::Call(idx));
             }
             Expr::BinOp(left, op, right, _) => {
                 self.compile_expr(left, instrs);
@@ -191,6 +205,7 @@ impl<'a> ExprCtx<'a> {
                     false
                 }
             }
+            Expr::Call(_, _, _) => true, // sema validated; assume float for now
             Expr::BinOp(left, op, _, _) => match op {
                 BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => self.is_float_expr(left),
                 _ => false,

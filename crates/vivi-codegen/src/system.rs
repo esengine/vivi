@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use vivi_parser::ast::*;
 use vivi_sema::layout::MemoryLayout;
 use vivi_sema::resolve::SystemInfo;
@@ -12,9 +13,10 @@ pub fn compile_system(
     sys: &SystemInfo,
     each_stmts: &[Stmt],
     layout: &MemoryLayout,
+    fn_index_map: &HashMap<String, u32>,
 ) -> Function {
     let entity_index_local: u32 = 0;
-    let mut ctx = ExprCtx::new(layout, &sys.each_params, entity_index_local);
+    let mut ctx = ExprCtx::new(layout, &sys.each_params, entity_index_local, fn_index_map);
 
     let mut instrs: Vec<Instruction<'static>> = Vec::new();
 
@@ -208,6 +210,7 @@ fn infer_expr_ty_simple(expr: &Expr, ctx: &ExprCtx) -> Ty {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => infer_expr_ty_simple(left, ctx),
             _ => Ty::Bool,
         },
+        Expr::Call(_, _, _) => Ty::F32, // sema validated; return type used at call site
         Expr::UnaryOp(UnaryOp::Neg, inner, _) => infer_expr_ty_simple(inner, ctx),
         Expr::UnaryOp(UnaryOp::Not, _, _) => Ty::Bool,
     }

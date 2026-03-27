@@ -12,6 +12,7 @@ pub enum Item {
     Component(ComponentDef),
     System(SystemDef),
     World(WorldDef),
+    Fn(FnDef),
 }
 
 #[derive(Debug, Clone)]
@@ -139,6 +140,7 @@ pub enum Expr {
     BoolLit(bool, Span),
     Ident(String, Span),
     FieldAccess(Box<Expr>, String, Span),
+    Call(String, Vec<Expr>, Span),
     BinOp(Box<Expr>, BinOp, Box<Expr>, Span),
     UnaryOp(UnaryOp, Box<Expr>, Span),
 }
@@ -151,6 +153,7 @@ impl Expr {
             Expr::BoolLit(_, s) => s,
             Expr::Ident(_, s) => s,
             Expr::FieldAccess(_, _, s) => s,
+            Expr::Call(_, _, s) => s,
             Expr::BinOp(_, _, _, s) => s,
             Expr::UnaryOp(_, _, s) => s,
         }
@@ -177,6 +180,22 @@ pub enum BinOp {
 pub enum UnaryOp {
     Neg,
     Not,
+}
+
+#[derive(Debug, Clone)]
+pub struct FnDef {
+    pub name: String,
+    pub params: Vec<FnParam>,
+    pub return_ty: Option<TypeName>,
+    pub body: Vec<Stmt>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct FnParam {
+    pub name: String,
+    pub ty: TypeName,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]

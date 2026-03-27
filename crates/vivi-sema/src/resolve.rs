@@ -46,16 +46,26 @@ pub struct EachParamInfo {
     pub component: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct FnSignature {
+    pub name: String,
+    pub params: Vec<(String, Ty)>,
+    pub return_ty: Option<Ty>,
+}
+
 #[derive(Debug)]
 pub struct ResolvedProgram {
     pub components: Vec<ComponentInfo>,
     pub systems: Vec<SystemInfo>,
+    pub functions: Vec<FnSignature>,
     pub world_systems: Vec<String>,
     pub layout: MemoryLayout,
 }
 
 pub fn resolve(program: &Program, source: &str) -> Result<ResolvedProgram, SemaError> {
     let mut components: HashMap<String, ComponentInfo> = HashMap::new();
+    let mut functions: Vec<FnSignature> = Vec::new();
+    let mut fn_map: HashMap<String, FnSignature> = HashMap::new();
     let mut systems: Vec<SystemInfo> = Vec::new();
     let mut world_systems: Vec<String> = Vec::new();
     let mut component_order: Vec<String> = Vec::new();
@@ -90,7 +100,52 @@ pub fn resolve(program: &Program, source: &str) -> Result<ResolvedProgram, SemaE
         }
     }
 
-    // Second pass: resolve systems
+    // Second pass: collect function signatures
+    for item in &program.items {
+        if let Item::Fn(fn_def) = item {
+            if fn_map.contains_key(&fn_def.name) {
+                return Err(SemaError {
+                    message: format!("duplicate function `{}`", fn_def.name),
+                    span: fn_def.span.clone(),
+                    label: "defined here".into(),
+                    source_code: source.to_string(),
+                });
+            }
+            let params: Vec<(String, Ty)> = fn_def
+                .params
+                .iter()
+                .map(|p| (p.name.clone(), Ty::from_ast(&p.ty)))
+                .collect();
+            let return_ty = fn_def.return_ty.as_ref().map(Ty::from_ast);
+            let sig = FnSignature {
+                name: fn_def.name.clone(),
+                params,
+                return_ty,
+            };
+            fn_map.insert(fn_def.name.clone(), sig.clone());
+            functions.push(sig);
+        }
+    }
+
+    // Type check function bodies
+    for item in &program.items {
+        if let Item::Fn(fn_def) = item {
+            let sig = &fn_map[&fn_def.name];
+            let mut locals: HashMap<String, Ty> = HashMap::new();
+            for (name, ty) in &sig.params {
+                locals.insert(name.clone(), ty.clone());
+            }
+            type_check_fn_body(
+                &fn_def.body,
+                &mut locals,
+                sig.return_ty.as_ref(),
+                &fn_map,
+                source,
+            )?;
+        }
+    }
+
+    // Third pass: resolve systems
     for item in &program.items {
         if let Item::System(sys) = item {
             let mut query_entries = Vec::new();
@@ -138,6 +193,7 @@ pub fn resolve(program: &Program, source: &str) -> Result<ResolvedProgram, SemaE
                 &each_params,
                 &components,
                 &mut locals,
+                &fn_map,
                 source,
             )?;
 
@@ -176,9 +232,20 @@ pub fn resolve(program: &Program, source: &str) -> Result<ResolvedProgram, SemaE
     Ok(ResolvedProgram {
         components: ordered_components,
         systems,
+        functions,
         world_systems,
         layout,
     })
+}
+
+/// Type context shared by all type-checking functions.
+struct TypeCtx<'a> {
+    params: &'a [EachParamInfo],
+    components: &'a HashMap<String, ComponentInfo>,
+    locals: &'a mut HashMap<String, Ty>,
+    functions: &'a HashMap<String, FnSignature>,
+    return_ty: Option<&'a Ty>,
+    source: &'a str,
 }
 
 fn type_check_body(
@@ -186,13 +253,39 @@ fn type_check_body(
     params: &[EachParamInfo],
     components: &HashMap<String, ComponentInfo>,
     locals: &mut HashMap<String, Ty>,
+    functions: &HashMap<String, FnSignature>,
     source: &str,
 ) -> Result<(), SemaError> {
+    let mut ctx = TypeCtx { params, components, locals, functions, return_ty: None, source };
+    check_stmts(stmts, &mut ctx)
+}
+
+fn type_check_fn_body(
+    stmts: &[Stmt],
+    locals: &mut HashMap<String, Ty>,
+    return_ty: Option<&Ty>,
+    functions: &HashMap<String, FnSignature>,
+    source: &str,
+) -> Result<(), SemaError> {
+    let empty: Vec<EachParamInfo> = vec![];
+    let empty_comps: HashMap<String, ComponentInfo> = HashMap::new();
+    let mut ctx = TypeCtx {
+        params: &empty,
+        components: &empty_comps,
+        locals,
+        functions,
+        return_ty,
+        source,
+    };
+    check_stmts(stmts, &mut ctx)
+}
+
+fn check_stmts(stmts: &[Stmt], ctx: &mut TypeCtx) -> Result<(), SemaError> {
     for stmt in stmts {
         match stmt {
             Stmt::Assign(assign) => {
-                let lhs_ty = infer_expr_type(&assign.target, params, components, locals, source)?;
-                let rhs_ty = infer_expr_type(&assign.value, params, components, locals, source)?;
+                let lhs_ty = infer_type(&assign.target, ctx)?;
+                let rhs_ty = infer_type(&assign.value, ctx)?;
                 if lhs_ty != rhs_ty {
                     return Err(SemaError {
                         message: format!(
@@ -200,12 +293,12 @@ fn type_check_body(
                         ),
                         span: assign.span.clone(),
                         label: format!("expected `{lhs_ty}`"),
-                        source_code: source.to_string(),
+                        source_code: ctx.source.to_string(),
                     });
                 }
             }
             Stmt::Let(let_stmt) => {
-                let val_ty = infer_expr_type(&let_stmt.value, params, components, locals, source)?;
+                let val_ty = infer_type(&let_stmt.value, ctx)?;
                 let ty = if let Some(ast_ty) = &let_stmt.ty {
                     let declared = Ty::from_ast(ast_ty);
                     if declared != val_ty {
@@ -215,31 +308,43 @@ fn type_check_body(
                             ),
                             span: let_stmt.span.clone(),
                             label: format!("expected `{declared}`"),
-                            source_code: source.to_string(),
+                            source_code: ctx.source.to_string(),
                         });
                     }
                     declared
                 } else {
                     val_ty
                 };
-                locals.insert(let_stmt.name.clone(), ty);
+                ctx.locals.insert(let_stmt.name.clone(), ty);
             }
             Stmt::If(if_stmt) => {
-                infer_expr_type(&if_stmt.condition, params, components, locals, source)?;
-                type_check_body(&if_stmt.then_body, params, components, locals, source)?;
+                infer_type(&if_stmt.condition, ctx)?;
+                check_stmts(&if_stmt.then_body, ctx)?;
                 if let Some(else_body) = &if_stmt.else_body {
-                    type_check_body(else_body, params, components, locals, source)?;
+                    check_stmts(else_body, ctx)?;
                 }
             }
             Stmt::While(while_stmt) => {
-                infer_expr_type(&while_stmt.condition, params, components, locals, source)?;
-                type_check_body(&while_stmt.body, params, components, locals, source)?;
+                infer_type(&while_stmt.condition, ctx)?;
+                check_stmts(&while_stmt.body, ctx)?;
             }
             Stmt::Expr(expr) => {
-                infer_expr_type(expr, params, components, locals, source)?;
+                infer_type(expr, ctx)?;
             }
-            Stmt::Return(Some(expr), _) => {
-                infer_expr_type(expr, params, components, locals, source)?;
+            Stmt::Return(Some(expr), span) => {
+                let ty = infer_type(expr, ctx)?;
+                if let Some(ret_ty) = ctx.return_ty {
+                    if ty != *ret_ty {
+                        return Err(SemaError {
+                            message: format!(
+                                "return type mismatch: expected `{ret_ty}`, found `{ty}`"
+                            ),
+                            span: span.clone(),
+                            label: format!("expected `{ret_ty}`"),
+                            source_code: ctx.source.to_string(),
+                        });
+                    }
+                }
             }
             Stmt::Return(None, _) => {}
         }
@@ -247,40 +352,30 @@ fn type_check_body(
     Ok(())
 }
 
-fn infer_expr_type(
-    expr: &Expr,
-    params: &[EachParamInfo],
-    components: &HashMap<String, ComponentInfo>,
-    locals: &HashMap<String, Ty>,
-    source: &str,
-) -> Result<Ty, SemaError> {
+fn infer_type(expr: &Expr, ctx: &TypeCtx) -> Result<Ty, SemaError> {
     match expr {
         Expr::IntLit(_, _) => Ok(Ty::I32),
         Expr::FloatLit(_, _) => Ok(Ty::F32),
         Expr::BoolLit(_, _) => Ok(Ty::Bool),
         Expr::Ident(name, span) => {
-            if let Some(ty) = locals.get(name) {
+            if let Some(ty) = ctx.locals.get(name) {
                 Ok(ty.clone())
-            } else if params.iter().any(|p| p.name == *name) {
-                // Component reference — not a usable value by itself, only via field access.
-                // Return a placeholder; field access resolves the real type.
-                Ok(Ty::Entity)
+            } else if ctx.params.iter().any(|p| p.name == *name) {
+                Ok(Ty::Entity) // placeholder for component ref
             } else {
                 Err(SemaError {
                     message: format!("undefined variable `{name}`"),
                     span: span.clone(),
                     label: "not found".into(),
-                    source_code: source.to_string(),
+                    source_code: ctx.source.to_string(),
                 })
             }
         }
         Expr::FieldAccess(obj, field, span) => {
             if let Expr::Ident(param_name, _) = obj.as_ref() {
-                // Check component params first
-                if let Some(param) = params.iter().find(|p| p.name == *param_name) {
-                    let comp = &components[&param.component];
-                    let field_info = comp.fields.iter().find(|f| f.name == *field);
-                    if let Some(fi) = field_info {
+                if let Some(param) = ctx.params.iter().find(|p| p.name == *param_name) {
+                    let comp = &ctx.components[&param.component];
+                    if let Some(fi) = comp.fields.iter().find(|f| f.name == *field) {
                         return Ok(fi.ty.clone());
                     } else {
                         return Err(SemaError {
@@ -290,7 +385,7 @@ fn infer_expr_type(
                             ),
                             span: span.clone(),
                             label: "no such field".into(),
-                            source_code: source.to_string(),
+                            source_code: ctx.source.to_string(),
                         });
                     }
                 }
@@ -298,20 +393,60 @@ fn infer_expr_type(
                     message: format!("undefined variable `{param_name}`"),
                     span: span.clone(),
                     label: "not found".into(),
-                    source_code: source.to_string(),
+                    source_code: ctx.source.to_string(),
                 })
             } else {
                 Err(SemaError {
                     message: "field access only supported on component parameters".into(),
                     span: span.clone(),
                     label: "unsupported".into(),
-                    source_code: source.to_string(),
+                    source_code: ctx.source.to_string(),
                 })
             }
         }
+        Expr::Call(name, args, span) => {
+            let sig = ctx.functions.get(name).ok_or_else(|| SemaError {
+                message: format!("undefined function `{name}`"),
+                span: span.clone(),
+                label: "not found".into(),
+                source_code: ctx.source.to_string(),
+            })?;
+            if args.len() != sig.params.len() {
+                return Err(SemaError {
+                    message: format!(
+                        "function `{name}` expects {} arguments, got {}",
+                        sig.params.len(),
+                        args.len()
+                    ),
+                    span: span.clone(),
+                    label: "wrong number of arguments".into(),
+                    source_code: ctx.source.to_string(),
+                });
+            }
+            for (i, arg) in args.iter().enumerate() {
+                let arg_ty = infer_type(arg, ctx)?;
+                let (param_name, param_ty) = &sig.params[i];
+                if arg_ty != *param_ty {
+                    return Err(SemaError {
+                        message: format!(
+                            "argument `{param_name}` of `{name}`: expected `{param_ty}`, got `{arg_ty}`"
+                        ),
+                        span: arg.span().clone(),
+                        label: format!("expected `{param_ty}`"),
+                        source_code: ctx.source.to_string(),
+                    });
+                }
+            }
+            sig.return_ty.clone().ok_or_else(|| SemaError {
+                message: format!("function `{name}` does not return a value"),
+                span: span.clone(),
+                label: "no return type".into(),
+                source_code: ctx.source.to_string(),
+            })
+        }
         Expr::BinOp(left, op, right, span) => {
-            let left_ty = infer_expr_type(left, params, components, locals, source)?;
-            let right_ty = infer_expr_type(right, params, components, locals, source)?;
+            let left_ty = infer_type(left, ctx)?;
+            let right_ty = infer_type(right, ctx)?;
             match op {
                 BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
                     if left_ty.is_numeric() && right_ty.is_numeric() {
@@ -333,7 +468,7 @@ fn infer_expr_type(
                             ),
                             span: span.clone(),
                             label: "type mismatch".into(),
-                            source_code: source.to_string(),
+                            source_code: ctx.source.to_string(),
                         })
                     }
                 }
@@ -343,7 +478,7 @@ fn infer_expr_type(
             }
         }
         Expr::UnaryOp(op, inner, _span) => {
-            let ty = infer_expr_type(inner, params, components, locals, source)?;
+            let ty = infer_type(inner, ctx)?;
             match op {
                 UnaryOp::Neg => Ok(ty),
                 UnaryOp::Not => Ok(Ty::Bool),

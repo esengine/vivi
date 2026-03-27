@@ -407,4 +407,165 @@ world Game {
             err.message
         );
     }
+
+    #[test]
+    fn test_fn_clamp_in_system() {
+        let source = r#"
+component Position {
+    x: f32
+    y: f32
+}
+
+component Velocity {
+    dx: f32
+    dy: f32
+}
+
+fn clamp(value: f32, min: f32, max: f32) -> f32 {
+    if value < min { return min }
+    if value > max { return max }
+    return value
+}
+
+system ClampedMovement {
+    query {
+        write Position
+        read Velocity
+    }
+    each(pos: Position, vel: Velocity) {
+        pos.x = clamp(pos.x + vel.dx, 0.0, 50.0)
+        pos.y = clamp(pos.y + vel.dy, 0.0, 50.0)
+    }
+}
+
+world Game {
+    systems {
+        ClampedMovement
+    }
+}
+"#;
+        let wasm_bytes = compile_vivi(source);
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm_bytes).unwrap();
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).unwrap();
+
+        let init = instance.get_typed_func::<(), ()>(&mut store, "init").unwrap();
+        let tick = instance.get_typed_func::<(), ()>(&mut store, "tick").unwrap();
+        let memory = instance.get_memory(&mut store, "memory").unwrap();
+
+        init.call(&mut store, ()).unwrap();
+
+        let pos_x_off = 4usize;
+        let pos_y_off = 4 + (MAX_ENTITIES as usize) * 4;
+        let vel_dx_off = 4 + (MAX_ENTITIES as usize) * 8;
+        let vel_dy_off = 4 + (MAX_ENTITIES as usize) * 12;
+
+        let data = memory.data_mut(&mut store);
+        data[0..4].copy_from_slice(&1i32.to_le_bytes());
+        // pos = (48, 5), vel = (10, -20)
+        data[pos_x_off..pos_x_off + 4].copy_from_slice(&48.0f32.to_le_bytes());
+        data[pos_y_off..pos_y_off + 4].copy_from_slice(&5.0f32.to_le_bytes());
+        data[vel_dx_off..vel_dx_off + 4].copy_from_slice(&10.0f32.to_le_bytes());
+        data[vel_dy_off..vel_dy_off + 4].copy_from_slice(&(-20.0f32).to_le_bytes());
+
+        tick.call(&mut store, ()).unwrap();
+
+        let data = memory.data(&store);
+        let x = f32::from_le_bytes(data[pos_x_off..pos_x_off + 4].try_into().unwrap());
+        let y = f32::from_le_bytes(data[pos_y_off..pos_y_off + 4].try_into().unwrap());
+
+        // 48+10=58 → clamped to 50, 5-20=-15 → clamped to 0
+        assert!((x - 50.0).abs() < 1e-6, "expected x=50.0 (clamped), got {x}");
+        assert!((y - 0.0).abs() < 1e-6, "expected y=0.0 (clamped), got {y}");
+    }
+
+    #[test]
+    fn test_fn_call_arg_type_error() {
+        let source = r#"
+fn add_f32(a: f32, b: f32) -> f32 {
+    return a + b
+}
+
+component Position {
+    x: f32
+    y: f32
+}
+
+system Bad {
+    query { write Position }
+    each(pos: Position) {
+        pos.x = add_f32(pos.x, 1)
+    }
+}
+
+world Game {
+    systems { Bad }
+}
+"#;
+        let program = vivi_parser::parse(source).expect("parse failed");
+        let result = vivi_sema::resolve(&program, source);
+        assert!(result.is_err(), "expected argument type error");
+        let err = result.unwrap_err();
+        assert!(
+            err.message.contains("expected `f32`"),
+            "expected type error mentioning f32, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_fn_calling_fn() {
+        // fn calling another fn
+        let source = r#"
+component Value {
+    n: f32
+    unused: f32
+}
+
+fn square(x: f32) -> f32 {
+    return x * x
+}
+
+fn sum_of_squares(a: f32, b: f32) -> f32 {
+    return square(a) + square(b)
+}
+
+system Compute {
+    query { write Value }
+    each(v: Value) {
+        v.n = sum_of_squares(3.0, 4.0)
+    }
+}
+
+world Game {
+    systems { Compute }
+}
+"#;
+        let wasm_bytes = compile_vivi(source);
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm_bytes).unwrap();
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).unwrap();
+
+        let init = instance.get_typed_func::<(), ()>(&mut store, "init").unwrap();
+        let tick = instance.get_typed_func::<(), ()>(&mut store, "tick").unwrap();
+        let memory = instance.get_memory(&mut store, "memory").unwrap();
+
+        init.call(&mut store, ()).unwrap();
+
+        let n_off = 4usize;
+
+        let data = memory.data_mut(&mut store);
+        data[0..4].copy_from_slice(&1i32.to_le_bytes());
+        data[n_off..n_off + 4].copy_from_slice(&0.0f32.to_le_bytes());
+
+        tick.call(&mut store, ()).unwrap();
+
+        let data = memory.data(&store);
+        let n = f32::from_le_bytes(data[n_off..n_off + 4].try_into().unwrap());
+
+        // 3^2 + 4^2 = 9 + 16 = 25
+        assert!((n - 25.0).abs() < 1e-6, "expected n=25.0, got {n}");
+    }
 }
