@@ -6,6 +6,7 @@ use vivi_sema::types::Ty;
 use wasm_encoder::{Function, Instruction, ValType};
 
 use crate::expr::ExprCtx;
+use crate::sourcemap::{FuncMappings, RawMapping};
 
 /// Compile a system's `each` body into a WASM function.
 /// The function iterates over all entities and executes the body for each.
@@ -15,6 +16,8 @@ pub fn compile_system(
     layout: &MemoryLayout,
     fn_index_map: &HashMap<String, u32>,
     void_fns: &HashSet<String>,
+    source: &str,
+    func_mappings: &mut FuncMappings,
 ) -> Function {
     let entity_index_local: u32 = 0;
     let mut ctx = ExprCtx::new(layout, &sys.each_params, entity_index_local, fn_index_map, void_fns);
@@ -50,6 +53,7 @@ pub fn compile_system(
 
     // Compile each statement in the body
     for stmt in each_stmts {
+        record_stmt_mapping(stmt, instrs.len(), source, func_mappings);
         compile_stmt(stmt, &mut ctx, &mut instrs);
     }
 
@@ -225,4 +229,43 @@ fn is_void_call(expr: &Expr, void_fns: &HashSet<String>) -> bool {
     } else {
         false
     }
+}
+
+pub fn span_to_line_col(source: &str, offset: usize) -> (u32, u32) {
+    let mut line = 0u32;
+    let mut col = 0u32;
+    for (i, ch) in source.char_indices() {
+        if i >= offset {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
+pub fn record_stmt_mapping(
+    stmt: &Stmt,
+    instr_index: usize,
+    source: &str,
+    mappings: &mut FuncMappings,
+) {
+    let span_start = match stmt {
+        Stmt::Assign(s) => s.span.start,
+        Stmt::Let(s) => s.span.start,
+        Stmt::If(s) => s.span.start,
+        Stmt::While(s) => s.span.start,
+        Stmt::Expr(e) => e.span().start,
+        Stmt::Return(_, span) => span.start,
+    };
+    let (line, col) = span_to_line_col(source, span_start);
+    mappings.entries.push(RawMapping {
+        instr_index: instr_index as u32,
+        source_line: line,
+        source_col: col,
+    });
 }

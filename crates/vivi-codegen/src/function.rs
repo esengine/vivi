@@ -4,6 +4,9 @@ use vivi_sema::resolve::FnSignature;
 use vivi_sema::types::Ty;
 use wasm_encoder::{Function, Instruction, ValType};
 
+use crate::sourcemap::FuncMappings;
+use crate::system::record_stmt_mapping;
+
 use crate::expr::LocalVar;
 
 /// Compile a user-defined function into a WASM function.
@@ -12,6 +15,8 @@ pub fn compile_user_fn(
     body: &[Stmt],
     fn_index_map: &HashMap<String, u32>,
     void_fns: &HashSet<String>,
+    source: &str,
+    func_mappings: &mut FuncMappings,
 ) -> Function {
     // Function params are WASM function parameters (not locals).
     // Additional locals come from let statements.
@@ -28,6 +33,7 @@ pub fn compile_user_fn(
 
     // Compile body
     for stmt in body {
+        record_stmt_mapping(stmt, instrs.len(), source, func_mappings);
         compile_fn_stmt(stmt, &mut locals, &mut next_local, fn_index_map, void_fns, &mut instrs);
     }
 

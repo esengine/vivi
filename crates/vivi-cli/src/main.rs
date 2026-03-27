@@ -62,23 +62,37 @@ fn main() -> miette::Result<()> {
 
     match cli.command {
         Commands::Build { input, output, target } => {
-            let (_source, program, resolved) = parse_and_resolve(&input)?;
-
-            let wasm_bytes = vivi_codegen::generate_wasm(&program, &resolved);
+            let (source, program, resolved) = parse_and_resolve(&input)?;
 
             if target == "web" {
-                // --target web: generate dist/ with .wasm + runtime.js + index.html
+                // --target web: generate dist/ with .wasm + source map + runtime.js + index.html
+                let (mut wasm_bytes, module_mappings) =
+                    vivi_codegen::generate_wasm_with_sourcemap(&program, &resolved, &source);
+
                 let out_dir = &output;
                 std::fs::create_dir_all(out_dir)
                     .into_diagnostic()
                     .wrap_err_with(|| format!("failed to create `{}`", out_dir.display()))?;
 
-                // Derive title from world name or input filename
                 let title = program.items.iter().find_map(|item| {
                     if let vivi_parser::ast::Item::World(w) = item { Some(w.name.clone()) } else { None }
                 }).unwrap_or_else(|| {
                     input.file_stem().unwrap_or_default().to_string_lossy().to_string()
                 });
+
+                let source_filename = input.file_name().unwrap_or_default().to_string_lossy().to_string();
+
+                // Append sourceMappingURL custom section to WASM
+                let url_section = vivi_codegen::source_mapping_url_section("app.wasm.map");
+                wasm_bytes.extend_from_slice(&url_section);
+
+                // Resolve mappings to absolute byte offsets and generate source map
+                let resolved_mappings = vivi_codegen::resolve_mappings(&wasm_bytes, &module_mappings);
+                let source_map_json = vivi_codegen::generate_source_map(
+                    &source_filename,
+                    &source,
+                    &resolved_mappings,
+                );
 
                 let config = vivi_web::WebBuildConfig {
                     title,
@@ -87,20 +101,28 @@ fn main() -> miette::Result<()> {
                 };
 
                 let wasm_path = out_dir.join("app.wasm");
+                let map_path = out_dir.join("app.wasm.map");
+                let source_path = out_dir.join(&source_filename);
                 let runtime_path = out_dir.join("runtime.js");
                 let html_path = out_dir.join("index.html");
 
                 std::fs::write(&wasm_path, &wasm_bytes).into_diagnostic()?;
+                std::fs::write(&map_path, &source_map_json).into_diagnostic()?;
+                std::fs::write(&source_path, &source).into_diagnostic()?;
                 std::fs::write(&runtime_path, vivi_web::generate_runtime_js(&resolved, &config)).into_diagnostic()?;
                 std::fs::write(&html_path, vivi_web::generate_index_html(&config)).into_diagnostic()?;
 
                 println!("Built web target -> {}/", out_dir.display());
-                println!("  app.wasm     ({} bytes)", wasm_bytes.len());
-                println!("  runtime.js   (auto-generated)");
-                println!("  index.html   (auto-generated)");
+                println!("  app.wasm      ({} bytes)", wasm_bytes.len());
+                println!("  app.wasm.map  (source map)");
+                println!("  {}   (source)", source_filename);
+                println!("  runtime.js    (auto-generated)");
+                println!("  index.html    (auto-generated)");
                 println!("\nServe with: python -m http.server 8000 -d {}", out_dir.display());
+                println!("Open Chrome DevTools → Sources to debug {}", source_filename);
             } else {
                 // Default: just output .wasm
+                let wasm_bytes = vivi_codegen::generate_wasm(&program, &resolved);
                 std::fs::write(&output, &wasm_bytes)
                     .into_diagnostic()
                     .wrap_err_with(|| format!("failed to write `{}`", output.display()))?;

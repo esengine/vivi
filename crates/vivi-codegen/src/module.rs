@@ -9,6 +9,7 @@ use wasm_encoder::{
 };
 
 use crate::function::compile_user_fn;
+use crate::sourcemap::{FuncMappings, ModuleMappings};
 use crate::system::compile_system;
 
 fn ty_to_valtype(ty: &Ty) -> ValType {
@@ -21,6 +22,22 @@ fn ty_to_valtype(ty: &Ty) -> ValType {
 }
 
 pub fn generate_wasm(program: &Program, resolved: &ResolvedProgram) -> Vec<u8> {
+    generate_wasm_with_mappings(program, resolved, None).0
+}
+
+pub fn generate_wasm_with_sourcemap(
+    program: &Program,
+    resolved: &ResolvedProgram,
+    source: &str,
+) -> (Vec<u8>, ModuleMappings) {
+    generate_wasm_with_mappings(program, resolved, Some(source))
+}
+
+fn generate_wasm_with_mappings(
+    program: &Program,
+    resolved: &ResolvedProgram,
+    source: Option<&str>,
+) -> (Vec<u8>, ModuleMappings) {
     let mut module = Module::new();
 
     let import_count = resolved.extern_fns.len();
@@ -134,6 +151,9 @@ pub fn generate_wasm(program: &Program, resolved: &ResolvedProgram) -> Vec<u8> {
         }
     }
 
+    let mut module_mappings = ModuleMappings::default();
+    let src = source.unwrap_or("");
+
     // User functions
     for sig in &resolved.functions {
         let ast_fn = program
@@ -147,8 +167,10 @@ pub fn generate_wasm(program: &Program, resolved: &ResolvedProgram) -> Vec<u8> {
                 }
             })
             .unwrap();
-        let func = compile_user_fn(sig, &ast_fn.body, &fn_index_map, &void_fns);
+        let mut fm = FuncMappings::default();
+        let func = compile_user_fn(sig, &ast_fn.body, &fn_index_map, &void_fns, src, &mut fm);
         codes.function(&func);
+        module_mappings.functions.push(fm);
     }
 
     // System functions
@@ -166,21 +188,25 @@ pub fn generate_wasm(program: &Program, resolved: &ResolvedProgram) -> Vec<u8> {
                 }
             })
             .unwrap();
-        let func = compile_system(sys_info, &ast_system.each.body, &resolved.layout, &fn_index_map, &void_fns);
+        let mut fm = FuncMappings::default();
+        let func = compile_system(sys_info, &ast_system.each.body, &resolved.layout, &fn_index_map, &void_fns, src, &mut fm);
         codes.function(&func);
+        module_mappings.functions.push(fm);
     }
 
-    // init function: set up entity templates
+    // init + tick (no source mappings for these generated functions)
+    module_mappings.functions.push(FuncMappings::default()); // init
+    module_mappings.functions.push(FuncMappings::default()); // tick
+
     let init_func = compile_init(&resolved.entities, &resolved.layout);
     codes.function(&init_func);
 
-    // tick: call system functions
     let tick_func = compile_tick(system_base, system_count);
     codes.function(&tick_func);
 
     module.section(&codes);
 
-    module.finish()
+    (module.finish(), module_mappings)
 }
 
 fn compile_init(
