@@ -124,6 +124,10 @@ fn compile_fn_stmt(
             instrs.push(Instruction::End);
             instrs.push(Instruction::End);
         }
+        Stmt::Spawn(_) => {
+            // Spawn in user functions not yet supported (needs layout access)
+            panic!("spawn not supported inside fn, use it in a system");
+        }
         Stmt::Return(Some(expr), _) => {
             compile_fn_expr(expr, locals, fn_index_map, instrs);
             instrs.push(Instruction::Return);

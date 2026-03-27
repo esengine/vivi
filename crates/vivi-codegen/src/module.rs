@@ -42,12 +42,24 @@ fn generate_wasm_with_mappings(
 
     let import_count = resolved.extern_fns.len();
     let fn_count = resolved.functions.len();
-    let system_count = resolved.world_systems.len();
+    // All unique systems (init + tick, deduplicated)
+    let mut all_system_names: Vec<String> = Vec::new();
+    for name in &resolved.world_init_systems {
+        if !all_system_names.contains(name) {
+            all_system_names.push(name.clone());
+        }
+    }
+    for name in &resolved.world_systems {
+        if !all_system_names.contains(name) {
+            all_system_names.push(name.clone());
+        }
+    }
+    let system_count = all_system_names.len();
 
     // WASM function index layout:
     // [0 .. import_count)                          imported (extern) functions
     // [import_count .. import_count+fn_count)      user fns
-    // [import_count+fn_count .. +system_count)     system fns
+    // [import_count+fn_count .. +system_count)     all system fns
     // import_count+fn_count+system_count           init
     // import_count+fn_count+system_count+1         tick
 
@@ -173,9 +185,11 @@ fn generate_wasm_with_mappings(
         module_mappings.functions.push(fm);
     }
 
-    // System functions
+    // All system functions (init systems + tick systems, deduplicated)
     let system_base = (import_count + fn_count) as u32;
-    for sys_name in &resolved.world_systems {
+    let mut system_index_map: HashMap<String, u32> = HashMap::new();
+    for (i, sys_name) in all_system_names.iter().enumerate() {
+        system_index_map.insert(sys_name.clone(), system_base + i as u32);
         let sys_info = resolved.systems.iter().find(|s| s.name == *sys_name).unwrap();
         let ast_system = program
             .items
@@ -190,31 +204,35 @@ fn generate_wasm_with_mappings(
             .unwrap();
         let mut fm = FuncMappings::default();
         let func = if let Some(each) = &ast_system.each {
-            // System with query/each — entity loop
             compile_system(sys_info, &each.body, &resolved.layout, &fn_index_map, &void_fns, src, &mut fm)
         } else {
-            // Bare system — just compile body as a simple function
-            compile_user_fn(
-                &vivi_sema::FnSignature { name: sys_info.name.clone(), params: vec![], return_ty: None },
-                &ast_system.body,
-                &fn_index_map,
-                &void_fns,
-                src,
-                &mut fm,
-            )
+            // Bare system: compile as system without entity loop (has layout for spawn)
+            compile_system(sys_info, &ast_system.body, &resolved.layout, &fn_index_map, &void_fns, src, &mut fm)
         };
         codes.function(&func);
         module_mappings.functions.push(fm);
     }
 
-    // init + tick (no source mappings for these generated functions)
-    module_mappings.functions.push(FuncMappings::default()); // init
-    module_mappings.functions.push(FuncMappings::default()); // tick
+    // init + tick
+    module_mappings.functions.push(FuncMappings::default());
+    module_mappings.functions.push(FuncMappings::default());
 
-    let init_func = compile_init(&resolved.entities, &resolved.layout);
+    // init: call init systems, then write entity templates
+    let init_system_indices: Vec<u32> = resolved
+        .world_init_systems
+        .iter()
+        .map(|name| system_index_map[name])
+        .collect();
+    let init_func = compile_init(&init_system_indices, &resolved.entities, &resolved.layout);
     codes.function(&init_func);
 
-    let tick_func = compile_tick(system_base, system_count);
+    // tick: call tick systems
+    let tick_system_indices: Vec<u32> = resolved
+        .world_systems
+        .iter()
+        .map(|name| system_index_map[name])
+        .collect();
+    let tick_func = compile_tick(&tick_system_indices);
     codes.function(&tick_func);
 
     module.section(&codes);
@@ -270,54 +288,45 @@ fn generate_wasm_with_mappings(
 }
 
 fn compile_init(
+    init_system_indices: &[u32],
     entities: &[vivi_sema::EntityInfo],
     layout: &MemoryLayout,
 ) -> Function {
     let mut func = Function::new(vec![]);
 
-    // Set entity_count = number of entity templates
+    // Set entity_count = number of static entity templates
     let entity_count = entities.len() as i32;
-    func.instruction(&Instruction::I32Const(0)); // address of entity_count
+    func.instruction(&Instruction::I32Const(0));
     func.instruction(&Instruction::I32Const(entity_count));
     func.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
-        offset: 0,
-        align: 2,
-        memory_index: 0,
+        offset: 0, align: 2, memory_index: 0,
     }));
 
-    // Write each entity's component field values into memory
+    // Write static entity template data
     for (entity_idx, entity) in entities.iter().enumerate() {
         for ec in &entity.components {
             let comp_layout = layout.get_component(&ec.component).unwrap();
             for (fname, fval) in &ec.field_values {
                 let fl = comp_layout.fields.iter().find(|f| f.name == *fname).unwrap();
-                // address = fl.offset + entity_idx * fl.element_size
                 let addr = fl.offset + (entity_idx as u32) * fl.element_size;
-
                 func.instruction(&Instruction::I32Const(addr as i32));
                 match fval {
                     FieldValue::F32(v) => {
                         func.instruction(&Instruction::F32Const(*v));
                         func.instruction(&Instruction::F32Store(wasm_encoder::MemArg {
-                            offset: 0,
-                            align: 2,
-                            memory_index: 0,
+                            offset: 0, align: 2, memory_index: 0,
                         }));
                     }
                     FieldValue::I32(v) => {
                         func.instruction(&Instruction::I32Const(*v));
                         func.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
-                            offset: 0,
-                            align: 2,
-                            memory_index: 0,
+                            offset: 0, align: 2, memory_index: 0,
                         }));
                     }
                     FieldValue::Bool(v) => {
                         func.instruction(&Instruction::I32Const(if *v { 1 } else { 0 }));
                         func.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
-                            offset: 0,
-                            align: 2,
-                            memory_index: 0,
+                            offset: 0, align: 2, memory_index: 0,
                         }));
                     }
                 }
@@ -325,14 +334,19 @@ fn compile_init(
         }
     }
 
+    // Call init systems (e.g. SpawnGalaxy)
+    for &idx in init_system_indices {
+        func.instruction(&Instruction::Call(idx));
+    }
+
     func.instruction(&Instruction::End);
     func
 }
 
-fn compile_tick(system_base: u32, system_count: usize) -> Function {
+fn compile_tick(tick_system_indices: &[u32]) -> Function {
     let mut func = Function::new(vec![]);
-    for i in 0..system_count {
-        func.instruction(&Instruction::Call(system_base + i as u32));
+    for &idx in tick_system_indices {
+        func.instruction(&Instruction::Call(idx));
     }
     func.instruction(&Instruction::End);
     func

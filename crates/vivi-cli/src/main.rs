@@ -1,7 +1,17 @@
 use clap::{Parser, Subcommand};
 use miette::{IntoDiagnostic, WrapErr};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, Ordering};
 use vivi_interp::Interpreter;
+
+static RNG_STATE: AtomicU32 = AtomicU32::new(12345);
+
+fn rand_f32() -> f32 {
+    let mut s = RNG_STATE.load(Ordering::Relaxed);
+    s = s.wrapping_mul(1103515245).wrapping_add(12345);
+    RNG_STATE.store(s, Ordering::Relaxed);
+    ((s >> 16) & 0x7FFF) as f32 / 32767.0
+}
 
 #[derive(Parser)]
 #[command(name = "vivi", about = "Vivi ECS language compiler")]
@@ -184,6 +194,13 @@ fn main() -> miette::Result<()> {
                         args[3].as_f32()
                     );
                     None
+                }),
+            );
+
+            interp.register_extern(
+                "random",
+                Box::new(|_| {
+                    Some(vivi_interp::Value::F32(rand_f32()))
                 }),
             );
 

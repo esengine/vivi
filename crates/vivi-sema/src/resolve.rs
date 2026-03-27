@@ -87,6 +87,7 @@ pub struct ResolvedProgram {
     pub functions: Vec<FnSignature>,
     pub extern_fns: Vec<ExternFnInfo>,
     pub entities: Vec<EntityInfo>,
+    pub world_init_systems: Vec<String>,
     pub world_systems: Vec<String>,
     pub layout: MemoryLayout,
 }
@@ -98,6 +99,7 @@ pub fn resolve(program: &Program, source: &str) -> Result<ResolvedProgram, SemaE
     let mut entities: Vec<EntityInfo> = Vec::new();
     let mut fn_map: HashMap<String, FnSignature> = HashMap::new();
     let mut systems: Vec<SystemInfo> = Vec::new();
+    let mut world_init_systems: Vec<String> = Vec::new();
     let mut world_systems: Vec<String> = Vec::new();
     let mut component_order: Vec<String> = Vec::new();
 
@@ -197,6 +199,7 @@ pub fn resolve(program: &Program, source: &str) -> Result<ResolvedProgram, SemaE
                 &mut locals,
                 sig.return_ty.as_ref(),
                 &fn_map,
+                &components,
                 source,
             )?;
         }
@@ -266,6 +269,7 @@ pub fn resolve(program: &Program, source: &str) -> Result<ResolvedProgram, SemaE
                     &mut locals,
                     None,
                     &fn_map,
+                    &components,
                     source,
                 )?;
 
@@ -384,6 +388,18 @@ pub fn resolve(program: &Program, source: &str) -> Result<ResolvedProgram, SemaE
     // Third pass: world
     for item in &program.items {
         if let Item::World(world) = item {
+            for sys_name in &world.init_systems {
+                let found = systems.iter().any(|s| s.name == *sys_name);
+                if !found {
+                    return Err(SemaError {
+                        message: format!("unknown system `{sys_name}` in world init"),
+                        span: world.span.clone(),
+                        label: "here".into(),
+                        source_code: source.to_string(),
+                    });
+                }
+                world_init_systems.push(sys_name.clone());
+            }
             for sys_name in &world.systems {
                 let found = systems.iter().any(|s| s.name == *sys_name);
                 if !found {
@@ -411,6 +427,7 @@ pub fn resolve(program: &Program, source: &str) -> Result<ResolvedProgram, SemaE
         functions,
         extern_fns,
         entities,
+        world_init_systems,
         world_systems,
         layout,
     })
@@ -443,13 +460,13 @@ fn type_check_fn_body(
     locals: &mut HashMap<String, Ty>,
     return_ty: Option<&Ty>,
     functions: &HashMap<String, FnSignature>,
+    components: &HashMap<String, ComponentInfo>,
     source: &str,
 ) -> Result<(), SemaError> {
     let empty: Vec<EachParamInfo> = vec![];
-    let empty_comps: HashMap<String, ComponentInfo> = HashMap::new();
     let mut ctx = TypeCtx {
         params: &empty,
-        components: &empty_comps,
+        components,
         locals,
         functions,
         return_ty,
@@ -525,6 +542,36 @@ fn check_stmts(stmts: &[Stmt], ctx: &mut TypeCtx) -> Result<(), SemaError> {
                 }
             }
             Stmt::Return(None, _) => {}
+            Stmt::Spawn(spawn) => {
+                for sc in &spawn.components {
+                    let comp = ctx.components.get(&sc.component).ok_or_else(|| SemaError {
+                        message: format!("unknown component `{}` in spawn", sc.component),
+                        span: sc.span.clone(),
+                        label: "not defined".into(),
+                        source_code: ctx.source.to_string(),
+                    })?;
+                    for (fname, fexpr) in &sc.fields {
+                        let fi = comp.fields.iter().find(|f| f.name == *fname).ok_or_else(|| SemaError {
+                            message: format!("component `{}` has no field `{fname}`", sc.component),
+                            span: sc.span.clone(),
+                            label: "no such field".into(),
+                            source_code: ctx.source.to_string(),
+                        })?;
+                        let val_ty = infer_type(fexpr, ctx)?;
+                        if val_ty != fi.ty {
+                            return Err(SemaError {
+                                message: format!(
+                                    "spawn field `{fname}`: expected `{}`, got `{val_ty}`",
+                                    fi.ty
+                                ),
+                                span: fexpr.span().clone(),
+                                label: format!("expected `{}`", fi.ty),
+                                source_code: ctx.source.to_string(),
+                            });
+                        }
+                    }
+                }
+            }
         }
     }
     Ok(())

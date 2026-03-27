@@ -103,8 +103,22 @@ pub enum Stmt {
     Let(LetStmt),
     If(IfStmt),
     While(WhileStmt),
+    Spawn(SpawnStmt),
     Expr(Expr),
     Return(Option<Expr>, Span),
+}
+
+#[derive(Debug, Clone)]
+pub struct SpawnStmt {
+    pub components: Vec<SpawnComponent>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct SpawnComponent {
+    pub component: String,
+    pub fields: Vec<(String, Expr)>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -234,6 +248,7 @@ pub struct EntityComponent {
 #[derive(Debug, Clone)]
 pub struct WorldDef {
     pub name: String,
+    pub init_systems: Vec<String>,
     pub systems: Vec<String>,
     pub span: Span,
 }

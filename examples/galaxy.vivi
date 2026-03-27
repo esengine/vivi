@@ -1,0 +1,101 @@
+extern host {
+    fn clear_screen()
+    fn set_color(r: i32, g: i32, b: i32)
+    fn draw_rect(x: f32, y: f32, w: f32, h: f32)
+    fn random() -> f32
+}
+
+component Position {
+    x: f32
+    y: f32
+}
+
+component Velocity {
+    dx: f32
+    dy: f32
+}
+
+component StarInfo {
+    size: f32
+    brightness: i32
+}
+
+fn wrap(value: f32, max: f32) -> f32 {
+    if value > max { return value - max }
+    if value < 0.0 { return value + max }
+    return value
+}
+
+system SpawnGalaxy {
+    let i: i32 = 0
+    while i < 5000 {
+        spawn {
+            Position {
+                x: random() * 800.0
+                y: random() * 600.0
+            }
+            Velocity {
+                dx: random() * 2.0 - 1.0
+                dy: random() * 2.0 - 1.0
+            }
+            StarInfo {
+                size: random() * 3.0 + 1.0
+                brightness: 150
+            }
+        }
+        i = i + 1
+    }
+}
+
+system Gravity {
+    query {
+        write Velocity
+        read Position
+    }
+    each(vel: Velocity, pos: Position) {
+        let dx: f32 = 400.0 - pos.x
+        let dy: f32 = 300.0 - pos.y
+        let dist_sq: f32 = dx * dx + dy * dy + 100.0
+        let force: f32 = 80.0 / dist_sq
+        vel.dx = (vel.dx + dx * force) * 0.999
+        vel.dy = (vel.dy + dy * force) * 0.999
+    }
+}
+
+system Movement {
+    query {
+        write Position
+        read Velocity
+    }
+    each(pos: Position, vel: Velocity) {
+        pos.x = wrap(pos.x + vel.dx, 800.0)
+        pos.y = wrap(pos.y + vel.dy, 600.0)
+    }
+}
+
+system ClearScreen {
+    clear_screen()
+}
+
+system Render {
+    query {
+        read Position
+        read StarInfo
+    }
+    each(pos: Position, star: StarInfo) {
+        set_color(star.brightness, star.brightness, star.brightness + 60)
+        draw_rect(pos.x, pos.y, star.size, star.size)
+    }
+}
+
+world Galaxy {
+    init {
+        SpawnGalaxy
+    }
+    systems {
+        ClearScreen
+        Gravity
+        Movement
+        Render
+    }
+}

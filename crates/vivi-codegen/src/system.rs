@@ -9,65 +9,63 @@ use crate::expr::ExprCtx;
 use crate::sourcemap::{FuncMappings, RawMapping};
 
 /// Compile a system's `each` body into a WASM function.
-/// The function iterates over all entities and executes the body for each.
+/// Compile a system. If it has each_params, wraps in entity loop. Otherwise runs once.
 pub fn compile_system(
     sys: &SystemInfo,
-    each_stmts: &[Stmt],
+    stmts: &[Stmt],
     layout: &MemoryLayout,
     fn_index_map: &HashMap<String, u32>,
     void_fns: &HashSet<String>,
     source: &str,
     func_mappings: &mut FuncMappings,
 ) -> Function {
+    let is_bare = sys.each_params.is_empty();
     let entity_index_local: u32 = 0;
     let mut ctx = ExprCtx::new(layout, &sys.each_params, entity_index_local, fn_index_map, void_fns);
 
     let mut instrs: Vec<Instruction<'static>> = Vec::new();
 
-    // Pre-scan for let statements to count needed locals
-    let extra_locals = count_let_stmts(each_stmts);
+    let extra_locals = count_let_stmts(stmts);
 
-    // Initialize loop counter to 0
-    instrs.push(Instruction::I32Const(0));
-    instrs.push(Instruction::LocalSet(entity_index_local));
+    if is_bare {
+        // Bare system: just compile statements, no entity loop
+        for stmt in stmts {
+            record_stmt_mapping(stmt, instrs.len(), source, func_mappings);
+            compile_stmt(stmt, &mut ctx, &mut instrs);
+        }
+    } else {
+        // System with each: entity loop
+        instrs.push(Instruction::I32Const(0));
+        instrs.push(Instruction::LocalSet(entity_index_local));
 
-    // block { loop {
-    //   if entity_index >= entity_count: break
-    //   ... body ...
-    //   entity_index++
-    //   br loop
-    // } }
-    instrs.push(Instruction::Block(wasm_encoder::BlockType::Empty));
-    instrs.push(Instruction::Loop(wasm_encoder::BlockType::Empty));
+        instrs.push(Instruction::Block(wasm_encoder::BlockType::Empty));
+        instrs.push(Instruction::Loop(wasm_encoder::BlockType::Empty));
 
-    // Load entity_count from memory[0]
-    instrs.push(Instruction::LocalGet(entity_index_local));
-    instrs.push(Instruction::I32Const(0));
-    instrs.push(Instruction::I32Load(wasm_encoder::MemArg {
-        offset: 0,
-        align: 2,
-        memory_index: 0,
-    }));
-    instrs.push(Instruction::I32GeS);
-    instrs.push(Instruction::BrIf(1));
+        instrs.push(Instruction::LocalGet(entity_index_local));
+        instrs.push(Instruction::I32Const(0));
+        instrs.push(Instruction::I32Load(wasm_encoder::MemArg {
+            offset: 0, align: 2, memory_index: 0,
+        }));
+        instrs.push(Instruction::I32GeS);
+        instrs.push(Instruction::BrIf(1));
 
-    // Compile each statement in the body
-    for stmt in each_stmts {
-        record_stmt_mapping(stmt, instrs.len(), source, func_mappings);
-        compile_stmt(stmt, &mut ctx, &mut instrs);
+        for stmt in stmts {
+            record_stmt_mapping(stmt, instrs.len(), source, func_mappings);
+            compile_stmt(stmt, &mut ctx, &mut instrs);
+        }
+
+        instrs.push(Instruction::LocalGet(entity_index_local));
+        instrs.push(Instruction::I32Const(1));
+        instrs.push(Instruction::I32Add);
+        instrs.push(Instruction::LocalSet(entity_index_local));
+
+        // Branch back to loop
+        instrs.push(Instruction::Br(0));
+
+        instrs.push(Instruction::End); // end loop
+        instrs.push(Instruction::End); // end block
     }
 
-    // Increment entity index
-    instrs.push(Instruction::LocalGet(entity_index_local));
-    instrs.push(Instruction::I32Const(1));
-    instrs.push(Instruction::I32Add);
-    instrs.push(Instruction::LocalSet(entity_index_local));
-
-    // Branch back to loop
-    instrs.push(Instruction::Br(0));
-
-    instrs.push(Instruction::End); // end loop
-    instrs.push(Instruction::End); // end block
     instrs.push(Instruction::End); // end function
 
     // Build locals: entity_index (i32) + user locals
@@ -162,6 +160,9 @@ fn compile_stmt(stmt: &Stmt, ctx: &mut ExprCtx, instrs: &mut Vec<Instruction<'st
             instrs.push(Instruction::End); // end loop
             instrs.push(Instruction::End); // end block
         }
+        Stmt::Spawn(spawn) => {
+            compile_spawn(spawn, ctx, instrs);
+        }
         Stmt::Expr(expr) => {
             ctx.compile_expr(expr, instrs);
             if !is_void_call(expr, ctx.void_fns) {
@@ -169,7 +170,6 @@ fn compile_stmt(stmt: &Stmt, ctx: &mut ExprCtx, instrs: &mut Vec<Instruction<'st
             }
         }
         Stmt::Return(_, _) => {
-            // In system context, return exits the function
             instrs.push(Instruction::Return);
         }
     }
@@ -231,6 +231,55 @@ fn is_void_call(expr: &Expr, void_fns: &HashSet<String>) -> bool {
     }
 }
 
+fn compile_spawn(
+    spawn: &SpawnStmt,
+    ctx: &mut ExprCtx,
+    instrs: &mut Vec<Instruction<'static>>,
+) {
+    // Allocate a local for the new entity index if not already done
+    let spawn_idx_local = ctx.alloc_local("__spawn_idx".to_string(), Ty::I32);
+
+    // Load current entity_count into spawn_idx_local
+    instrs.push(Instruction::I32Const(0)); // address of entity_count
+    instrs.push(Instruction::I32Load(wasm_encoder::MemArg {
+        offset: 0, align: 2, memory_index: 0,
+    }));
+    instrs.push(Instruction::LocalSet(spawn_idx_local));
+
+    // Write each component field
+    for sc in &spawn.components {
+        let comp_layout = ctx.layout.get_component(&sc.component).unwrap();
+        for (fname, fexpr) in &sc.fields {
+            let fl = comp_layout.fields.iter().find(|f| f.name == *fname).unwrap();
+            // address = fl.offset + spawn_idx * fl.element_size
+            instrs.push(Instruction::I32Const(fl.offset as i32));
+            instrs.push(Instruction::LocalGet(spawn_idx_local));
+            instrs.push(Instruction::I32Const(fl.element_size as i32));
+            instrs.push(Instruction::I32Mul);
+            instrs.push(Instruction::I32Add);
+            // evaluate value expression
+            ctx.compile_expr(fexpr, instrs);
+            // store
+            let mem = wasm_encoder::MemArg { offset: 0, align: 2, memory_index: 0 };
+            match &fl.ty {
+                Ty::F32 => instrs.push(Instruction::F32Store(mem)),
+                Ty::I32 | Ty::Bool | Ty::Entity => instrs.push(Instruction::I32Store(mem)),
+                Ty::F64 => instrs.push(Instruction::F64Store(wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 })),
+                Ty::I64 => instrs.push(Instruction::I64Store(wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 })),
+            }
+        }
+    }
+
+    // Increment entity_count: memory[0] = spawn_idx + 1
+    instrs.push(Instruction::I32Const(0));
+    instrs.push(Instruction::LocalGet(spawn_idx_local));
+    instrs.push(Instruction::I32Const(1));
+    instrs.push(Instruction::I32Add);
+    instrs.push(Instruction::I32Store(wasm_encoder::MemArg {
+        offset: 0, align: 2, memory_index: 0,
+    }));
+}
+
 pub fn span_to_line_col(source: &str, offset: usize) -> (u32, u32) {
     let mut line = 0u32;
     let mut col = 0u32;
@@ -259,6 +308,7 @@ pub fn record_stmt_mapping(
         Stmt::Let(s) => s.span.start,
         Stmt::If(s) => s.span.start,
         Stmt::While(s) => s.span.start,
+        Stmt::Spawn(s) => s.span.start,
         Stmt::Expr(e) => e.span().start,
         Stmt::Return(_, span) => span.start,
     };

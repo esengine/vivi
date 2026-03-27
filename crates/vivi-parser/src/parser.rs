@@ -212,6 +212,7 @@ impl Parser {
             Some(Token::If) => self.parse_if(),
             Some(Token::While) => self.parse_while(),
             Some(Token::Return) => self.parse_return(),
+            Some(Token::Spawn) => self.parse_spawn(),
             _ => {
                 let expr = self.parse_expr()?;
                 // Check for assignment
@@ -314,6 +315,49 @@ impl Parser {
             Some(expr)
         };
         Ok(Stmt::Return(value, start..end))
+    }
+
+    fn parse_spawn(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.current_span().start;
+        self.expect(Token::Spawn)?;
+        self.expect(Token::LBrace)?;
+        self.skip_newlines();
+
+        let mut components = Vec::new();
+        while !self.check(&Token::RBrace) {
+            let comp_start = self.current_span().start;
+            let comp_name = self.expect_ident()?;
+            self.expect(Token::LBrace)?;
+            self.skip_newlines();
+
+            let mut fields = Vec::new();
+            while !self.check(&Token::RBrace) {
+                let field_name = self.expect_ident()?;
+                self.expect(Token::Colon)?;
+                let value = self.parse_expr()?;
+                fields.push((field_name, value));
+                self.skip_newlines();
+                if self.check(&Token::Comma) {
+                    self.advance();
+                    self.skip_newlines();
+                }
+            }
+            self.expect(Token::RBrace)?;
+            let comp_end = self.previous_span().end;
+            components.push(SpawnComponent {
+                component: comp_name,
+                fields,
+                span: comp_start..comp_end,
+            });
+            self.skip_newlines();
+        }
+        self.expect(Token::RBrace)?;
+        let end = self.previous_span().end;
+
+        Ok(Stmt::Spawn(SpawnStmt {
+            components,
+            span: start..end,
+        }))
     }
 
     // Expression parsing with precedence climbing
@@ -682,6 +726,23 @@ impl Parser {
         })
     }
 
+    fn parse_system_list(&mut self) -> Result<Vec<String>, ParseError> {
+        self.expect(Token::LBrace)?;
+        self.skip_newlines();
+        let mut list = Vec::new();
+        while !self.check(&Token::RBrace) {
+            list.push(self.expect_ident()?);
+            self.skip_newlines();
+            if self.check(&Token::Comma) {
+                self.advance();
+                self.skip_newlines();
+            }
+        }
+        self.expect(Token::RBrace)?;
+        self.skip_newlines();
+        Ok(list)
+    }
+
     fn parse_world(&mut self) -> Result<WorldDef, ParseError> {
         let start = self.current_span().start;
         self.expect(Token::World)?;
@@ -689,27 +750,29 @@ impl Parser {
         self.expect(Token::LBrace)?;
         self.skip_newlines();
 
+        let mut init_systems = Vec::new();
         let mut systems = Vec::new();
-        if self.check(&Token::Systems) {
-            self.advance();
-            self.expect(Token::LBrace)?;
-            self.skip_newlines();
-            while !self.check(&Token::RBrace) {
-                systems.push(self.expect_ident()?);
-                self.skip_newlines();
-                if self.check(&Token::Comma) {
+
+        // Parse init { ... } and systems { ... } in any order
+        while !self.check(&Token::RBrace) {
+            match self.peek_token() {
+                Some(Token::Ident(ref s)) if s == "init" => {
                     self.advance();
-                    self.skip_newlines();
+                    init_systems = self.parse_system_list()?;
                 }
+                Some(Token::Systems) => {
+                    self.advance();
+                    systems = self.parse_system_list()?;
+                }
+                _ => return Err(self.error("expected `init` or `systems` in world".into())),
             }
-            self.expect(Token::RBrace)?;
-            self.skip_newlines();
         }
 
         self.expect(Token::RBrace)?;
         let end = self.previous_span().end;
         Ok(WorldDef {
             name,
+            init_systems,
             systems,
             span: start..end,
         })

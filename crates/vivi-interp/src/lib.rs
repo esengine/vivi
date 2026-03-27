@@ -51,6 +51,7 @@ pub struct Interpreter {
     pub memory: Vec<u8>,
     layout: MemoryLayout,
     entities: Vec<EntityInfo>,
+    world_init_systems: Vec<String>,
     world_systems: Vec<String>,
     system_infos: Vec<SystemInfo>,
     system_bodies: HashMap<String, Vec<Stmt>>,
@@ -118,6 +119,7 @@ impl Interpreter {
             memory,
             layout: resolved.layout.clone(),
             entities: resolved.entities.clone(),
+            world_init_systems: resolved.world_init_systems.clone(),
             world_systems: resolved.world_systems.clone(),
             system_infos: resolved.systems.clone(),
             system_bodies,
@@ -159,6 +161,12 @@ impl Interpreter {
                     }
                 }
             }
+        }
+
+        // Run init systems
+        let init_systems: Vec<String> = self.world_init_systems.clone();
+        for sys_name in &init_systems {
+            self.run_system(sys_name);
         }
     }
 
@@ -268,6 +276,10 @@ impl Interpreter {
                 Flow::Return(Some(value))
             }
             Stmt::Return(None, _) => Flow::Return(None),
+            Stmt::Spawn(spawn) => {
+                self.exec_spawn(spawn, locals, each_params, entity_idx);
+                Flow::Continue
+            }
             Stmt::Expr(expr) => {
                 self.eval_expr(expr, locals, each_params, entity_idx);
                 Flow::Continue
@@ -325,6 +337,53 @@ impl Interpreter {
                 }
             }
         }
+    }
+
+    fn exec_spawn(
+        &mut self,
+        spawn: &vivi_parser::ast::SpawnStmt,
+        locals: &HashMap<String, Value>,
+        each_params: Option<&[vivi_sema::resolve::EachParamInfo]>,
+        entity_idx: u32,
+    ) {
+        let idx = i32::from_le_bytes(self.memory[0..4].try_into().unwrap()) as u32;
+
+        // Pre-collect layout info to avoid borrow conflicts
+        let field_addrs: Vec<(usize, usize, vivi_sema::types::Ty)> = spawn
+            .components
+            .iter()
+            .flat_map(|sc| {
+                let comp_layout = self.layout.get_component(&sc.component).unwrap();
+                sc.fields.iter().enumerate().map(move |(i, (fname, _))| {
+                    let fl = comp_layout.fields.iter().find(|f| f.name == *fname).unwrap();
+                    let addr = (fl.offset + idx * fl.element_size) as usize;
+                    (i, addr, fl.ty.clone())
+                })
+            })
+            .collect();
+
+        // Evaluate and store
+        let all_exprs: Vec<&vivi_parser::ast::Expr> = spawn
+            .components
+            .iter()
+            .flat_map(|sc| sc.fields.iter().map(|(_, e)| e))
+            .collect();
+
+        for (i, (_, addr, ty)) in field_addrs.iter().enumerate() {
+            let value = self.eval_expr(all_exprs[i], locals, each_params, entity_idx);
+            match value {
+                Value::F32(v) => self.memory[*addr..*addr + 4].copy_from_slice(&v.to_le_bytes()),
+                Value::I32(v) => self.memory[*addr..*addr + 4].copy_from_slice(&v.to_le_bytes()),
+                Value::Bool(v) => {
+                    let val: i32 = if v { 1 } else { 0 };
+                    self.memory[*addr..*addr + 4].copy_from_slice(&val.to_le_bytes());
+                }
+                Value::F64(v) => self.memory[*addr..*addr + 8].copy_from_slice(&v.to_le_bytes()),
+            }
+        }
+
+        let new_count = (idx + 1) as i32;
+        self.memory[0..4].copy_from_slice(&new_count.to_le_bytes());
     }
 
     fn call_fn(&mut self, name: &str, args: Vec<Value>) -> Value {
