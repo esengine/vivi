@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Vivi WASM - Performance Benchmark</title>
+<style>
+  body { font-family: monospace; background: #1a1a2e; color: #e0e0e0; padding: 2rem; }
+  h1 { color: #818cf8; }
+  #log { white-space: pre; line-height: 1.8; }
+  .header { color: #fbbf24; font-weight: bold; }
+  .result { color: #4ade80; }
+  .dim { color: #9ca3af; }
+  table { border-collapse: collapse; margin: 1rem 0; }
+  th, td { padding: 0.4rem 1.2rem; text-align: right; border-bottom: 1px solid #333; }
+  th { color: #818cf8; }
+  td.label { text-align: left; color: #fbbf24; }
+</style>
+</head>
+<body>
+<h1>Vivi WASM - Performance Benchmark</h1>
+<div id="log"></div>
+<table id="results" style="display:none">
+  <thead><tr><th>Entities</th><th>Ticks/sec</th><th>us/tick</th><th>ns/entity/tick</th></tr></thead>
+  <tbody id="tbody"></tbody>
+</table>
+<script>
+const logEl = document.getElementById('log');
+const MAX_ENTITIES = 10000;
+
+function print(msg, cls) {
+  logEl.innerHTML += `<span class="${cls || ''}">${msg}</span>\n`;
+}
+
+function benchFn(fn, warmup = 50, minTime = 500) {
+  for (let i = 0; i < warmup; i++) fn();
+
+  let iters = 0;
+  const start = performance.now();
+  while (performance.now() - start < minTime) {
+    fn();
+    iters++;
+  }
+  const elapsed = performance.now() - start;
+  return { iters, elapsed, avgMs: elapsed / iters };
+}
+
+async function run() {
+  print('Loading output.wasm...', 'dim');
+
+  let wasm;
+  try {
+    const resp = await fetch('output.wasm');
+    const bytes = await resp.arrayBuffer();
+    wasm = await WebAssembly.instantiate(bytes);
+  } catch (e) {
+    print(`Failed to load WASM: ${e}`);
+    print('Run: python -m http.server 8000    (from examples/ folder)', 'dim');
+    return;
+  }
+
+  const { init, tick, memory } = wasm.instance.exports;
+  print('Module loaded.\n', 'dim');
+
+  const posXOff = 4;
+  const posYOff = 4 + MAX_ENTITIES * 4;
+  const velDxOff = 4 + MAX_ENTITIES * 8;
+  const velDyOff = 4 + MAX_ENTITIES * 12;
+
+  function setupEntities(count) {
+    init();
+    const mem = new DataView(memory.buffer);
+    mem.setInt32(0, count, true);
+    for (let i = 0; i < count; i++) {
+      const off = i * 4;
+      mem.setFloat32(posXOff + off, i * 1.0, true);
+      mem.setFloat32(posYOff + off, i * 2.0, true);
+      mem.setFloat32(velDxOff + off, 1.0, true);
+      mem.setFloat32(velDyOff + off, 0.5, true);
+    }
+  }
+
+  const counts = [100, 1000, 5000, 10000];
+  const table = document.getElementById('results');
+  const tbody = document.getElementById('tbody');
+  table.style.display = '';
+
+  print('=== tick() Throughput ===\n', 'header');
+
+  for (const count of counts) {
+    print(`Benchmarking ${count} entities...`, 'dim');
+    setupEntities(count);
+
+    // Let the JIT warm up a bit more for larger counts
+    const warmup = count <= 1000 ? 100 : 30;
+    const result = benchFn(() => tick(), warmup, 1000);
+
+    const ticksPerSec = (1000 / result.avgMs).toFixed(0);
+    const usPerTick = (result.avgMs * 1000).toFixed(2);
+    const nsPerEntity = ((result.avgMs * 1e6) / count).toFixed(1);
+
+    const row = tbody.insertRow();
+    row.insertCell().textContent = count.toLocaleString();
+    row.insertCell().textContent = Number(ticksPerSec).toLocaleString();
+    row.insertCell().textContent = usPerTick;
+    row.insertCell().textContent = nsPerEntity;
+
+    print(`  ${count} entities: ${ticksPerSec} ticks/s | ${usPerTick} us/tick | ${nsPerEntity} ns/entity`, 'result');
+  }
+
+  // Compile time proxy: measure instantiation
+  print('\n=== WASM Instantiation ===\n', 'header');
+  const wasmBytes = await (await fetch('output.wasm')).arrayBuffer();
+
+  const instResult = benchFn(async () => {
+    // Synchronous compile+instantiate
+    const mod = new WebAssembly.Module(wasmBytes);
+    new WebAssembly.Instance(mod);
+  }, 20, 500);
+  print(`  Instantiation: ${(instResult.avgMs * 1000).toFixed(1)} us/call (${instResult.iters} iterations)`, 'result');
+
+  print('\n=== Done ===', 'header');
+}
+
+run();
+</script>
+</body>
+</html>

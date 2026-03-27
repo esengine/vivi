@@ -1,0 +1,9 @@
+[package]
+name = "vivi-parser"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+vivi-lexer = { path = "../vivi-lexer" }
+miette = { workspace = true }
+thiserror = { workspace = true }

@@ -1,0 +1,16 @@
+[package]
+name = "vivi-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "vivi"
+path = "src/main.rs"
+
+[dependencies]
+vivi-lexer = { path = "../vivi-lexer" }
+vivi-parser = { path = "../vivi-parser" }
+vivi-sema = { path = "../vivi-sema" }
+vivi-codegen = { path = "../vivi-codegen" }
+clap = { workspace = true }
+miette = { workspace = true }

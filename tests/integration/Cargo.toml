@@ -1,0 +1,18 @@
+[package]
+name = "vivi-integration-tests"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+vivi-lexer = { path = "../../crates/vivi-lexer" }
+vivi-parser = { path = "../../crates/vivi-parser" }
+vivi-sema = { path = "../../crates/vivi-sema" }
+vivi-codegen = { path = "../../crates/vivi-codegen" }
+wasmtime = { workspace = true }
+
+[[bench]]
+name = "tick_throughput"
+harness = false
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }

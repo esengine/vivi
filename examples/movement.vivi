@@ -1,0 +1,26 @@
+component Position {
+    x: f32
+    y: f32
+}
+
+component Velocity {
+    dx: f32
+    dy: f32
+}
+
+system Movement {
+    query {
+        write Position
+        read Velocity
+    }
+    each(pos: Position, vel: Velocity) {
+        pos.x = pos.x + vel.dx
+        pos.y = pos.y + vel.dy
+    }
+}
+
+world Game {
+    systems {
+        Movement
+    }
+}

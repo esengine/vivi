@@ -1,0 +1,9 @@
+[package]
+name = "vivi-lexer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+logos = { workspace = true }
+miette = { workspace = true }
+thiserror = { workspace = true }

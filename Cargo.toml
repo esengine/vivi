@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/vivi-lexer",
+    "crates/vivi-parser",
+    "crates/vivi-sema",
+    "crates/vivi-codegen",
+    "crates/vivi-cli",
+    "tests/integration",
+]
+
+[workspace.dependencies]
+logos = "0.14"
+wasm-encoder = "0.225"
+wasmtime = "29"
+clap = { version = "4", features = ["derive"] }
+miette = { version = "7", features = ["fancy"] }
+thiserror = "2"
