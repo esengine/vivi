@@ -1,0 +1,149 @@
+// Buffered rendering — all drawing logic in pure Vivi
+// JS only reads the command buffer and calls fillRect in a loop
+
+extern host {
+    fn random() -> f32
+}
+
+// ========== Render buffer protocol ==========
+// Memory layout (agreed with JS runtime):
+//   DRAW_BUF_COUNT_ADDR: i32 = number of draw commands
+//   DRAW_BUF_ADDR: each command = 32 bytes:
+//     [0]  x: f32
+//     [4]  y: f32
+//     [8]  w: f32
+//     [12] h: f32
+//     [16] r: i32
+//     [20] g: i32
+//     [24] b: i32
+//     [28] kind: i32 (0=rect, 1=clear)
+
+global DRAW_BUF_COUNT_ADDR: i32 = 900000
+global DRAW_BUF_ADDR: i32 = 900004
+global current_r: i32 = 255
+global current_g: i32 = 255
+global current_b: i32 = 255
+
+fn set_color(r: i32, g: i32, b: i32) {
+    current_r = r
+    current_g = g
+    current_b = b
+}
+
+fn draw_rect(x: f32, y: f32, w: f32, h: f32) {
+    let count: i32 = mem_load_i32(DRAW_BUF_COUNT_ADDR)
+    let offset: i32 = DRAW_BUF_ADDR + count * 32
+    mem_store_f32(offset, x)
+    mem_store_f32(offset + 4, y)
+    mem_store_f32(offset + 8, w)
+    mem_store_f32(offset + 12, h)
+    mem_store_i32(offset + 16, current_r)
+    mem_store_i32(offset + 20, current_g)
+    mem_store_i32(offset + 24, current_b)
+    mem_store_i32(offset + 28, 0)
+    mem_store_i32(DRAW_BUF_COUNT_ADDR, count + 1)
+}
+
+fn clear_screen() {
+    // Reset buffer and add a clear command
+    mem_store_i32(DRAW_BUF_COUNT_ADDR, 0)
+    let offset: i32 = DRAW_BUF_ADDR
+    mem_store_i32(offset + 28, 1)
+    mem_store_i32(DRAW_BUF_COUNT_ADDR, 1)
+}
+
+// ========== Game logic ==========
+component Position {
+    x: f32
+    y: f32
+}
+
+component Velocity {
+    dx: f32
+    dy: f32
+}
+
+component StarInfo {
+    size: f32
+    brightness: i32
+}
+
+fn wrap(value: f32, max: f32) -> f32 {
+    if value > max { return value - max }
+    if value < 0.0 { return value + max }
+    return value
+}
+
+system SpawnStars {
+    let i: i32 = 0
+    while i < 3000 {
+        spawn {
+            Position {
+                x: random() * 800.0
+                y: random() * 600.0
+            }
+            Velocity {
+                dx: random() * 2.0 - 1.0
+                dy: random() * 2.0 - 1.0
+            }
+            StarInfo {
+                size: random() * 3.0 + 1.0
+                brightness: 150
+            }
+        }
+        i = i + 1
+    }
+}
+
+system Gravity {
+    query {
+        write Velocity
+        read Position
+    }
+    each(vel: Velocity, pos: Position) {
+        let dx: f32 = 400.0 - pos.x
+        let dy: f32 = 300.0 - pos.y
+        let dist_sq: f32 = dx * dx + dy * dy + 100.0
+        let force: f32 = 80.0 / dist_sq
+        vel.dx = (vel.dx + dx * force) * 0.999
+        vel.dy = (vel.dy + dy * force) * 0.999
+    }
+}
+
+system Movement {
+    query {
+        write Position
+        read Velocity
+    }
+    each(pos: Position, vel: Velocity) {
+        pos.x = wrap(pos.x + vel.dx, 800.0)
+        pos.y = wrap(pos.y + vel.dy, 600.0)
+    }
+}
+
+system ClearScreen {
+    clear_screen()
+}
+
+system Render {
+    query {
+        read Position
+        read StarInfo
+    }
+    each(pos: Position, star: StarInfo) {
+        set_color(star.brightness, star.brightness, star.brightness + 60)
+        draw_rect(pos.x, pos.y, star.size, star.size)
+    }
+}
+
+world Galaxy {
+    init {
+        SpawnStars
+    }
+    systems {
+        ClearScreen
+        Gravity
+        Movement
+        Render
+    }
+}

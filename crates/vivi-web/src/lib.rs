@@ -128,7 +128,38 @@ pub fn generate_runtime_js(resolved: &ResolvedProgram, config: &WebBuildConfig) 
     js.push_str("};\n\n");
 
     js.push_str(
-        r#"async function boot() {
+        r#"// Render buffer reader — executes draw commands written by Vivi
+// This is pure infrastructure (like a display driver), not business logic.
+// Vivi code decides WHAT to draw; this code just executes the commands.
+const DRAW_BUF_COUNT_ADDR = 900000;
+const DRAW_BUF_ADDR = 900004;
+
+function flushDrawCommands(mem) {
+    const view = new DataView(mem.buffer);
+    const count = view.getInt32(DRAW_BUF_COUNT_ADDR, true);
+    for (let i = 0; i < count; i++) {
+        const off = DRAW_BUF_ADDR + i * 32;
+        const kind = view.getInt32(off + 28, true);
+        if (kind === 1) {
+            // Clear
+            ctx.fillStyle = '#0a0a1a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        } else {
+            // Rect
+            const x = view.getFloat32(off, true);
+            const y = view.getFloat32(off + 4, true);
+            const w = view.getFloat32(off + 8, true);
+            const h = view.getFloat32(off + 12, true);
+            const r = view.getInt32(off + 16, true);
+            const g = view.getInt32(off + 20, true);
+            const b = view.getInt32(off + 24, true);
+            ctx.fillStyle = `rgb(${r},${g},${b})`;
+            ctx.fillRect(x, y, w, h);
+        }
+    }
+}
+
+async function boot() {
     const { instance } = await WebAssembly.instantiateStreaming(fetch(WASM_FILE), imports);
     const { init, tick, memory } = instance.exports;
 
@@ -136,6 +167,7 @@ pub fn generate_runtime_js(resolved: &ResolvedProgram, config: &WebBuildConfig) 
 
     function frame() {
         tick();
+        flushDrawCommands(memory);
         requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);
