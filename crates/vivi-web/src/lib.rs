@@ -63,7 +63,11 @@ impl Default for WebBuildConfig {
 }
 
 /// Generate runtime.js content from extern fn declarations + std library.
-pub fn generate_runtime_js(resolved: &ResolvedProgram, config: &WebBuildConfig) -> String {
+pub fn generate_runtime_js(
+    resolved: &ResolvedProgram,
+    config: &WebBuildConfig,
+    used_std_modules: &[String],
+) -> String {
     let std_fns = build_std_fn_map();
 
     let mut modules: std::collections::BTreeMap<String, Vec<&vivi_sema::resolve::ExternFnInfo>> =
@@ -127,39 +131,22 @@ pub fn generate_runtime_js(resolved: &ResolvedProgram, config: &WebBuildConfig) 
     }
     js.push_str("};\n\n");
 
-    js.push_str(
-        r#"// Render buffer reader — executes draw commands written by Vivi
-// This is pure infrastructure (like a display driver), not business logic.
-// Vivi code decides WHAT to draw; this code just executes the commands.
-const DRAW_BUF_COUNT_ADDR = 900000;
-const DRAW_BUF_ADDR = 900004;
+    // Include paired JS drivers for used std modules
+    let uses_render = used_std_modules.iter().any(|m| m == "std.render");
 
-function flushDrawCommands(mem) {
-    const view = new DataView(mem.buffer);
-    const count = view.getInt32(DRAW_BUF_COUNT_ADDR, true);
-    for (let i = 0; i < count; i++) {
-        const off = DRAW_BUF_ADDR + i * 32;
-        const kind = view.getInt32(off + 28, true);
-        if (kind === 1) {
-            // Clear
-            ctx.fillStyle = '#0a0a1a';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-        } else {
-            // Rect
-            const x = view.getFloat32(off, true);
-            const y = view.getFloat32(off + 4, true);
-            const w = view.getFloat32(off + 8, true);
-            const h = view.getFloat32(off + 12, true);
-            const r = view.getInt32(off + 16, true);
-            const g = view.getInt32(off + 20, true);
-            const b = view.getInt32(off + 24, true);
-            ctx.fillStyle = `rgb(${r},${g},${b})`;
-            ctx.fillRect(x, y, w, h);
+    if uses_render {
+        // Include render driver from std/host/render.js
+        for (_module, source) in load_std_host_sources() {
+            if _module == "render" {
+                js.push_str(source);
+                js.push_str("\n\n");
+            }
         }
     }
-}
 
-async function boot() {
+    // Boot
+    js.push_str(
+        r#"async function boot() {
     const { instance } = await WebAssembly.instantiateStreaming(fetch(WASM_FILE), imports);
     const { init, tick, memory } = instance.exports;
 
@@ -167,8 +154,15 @@ async function boot() {
 
     function frame() {
         tick();
-        flushDrawCommands(memory);
-        requestAnimationFrame(frame);
+"#,
+    );
+
+    if uses_render {
+        js.push_str("        __vivi_flush_draws(memory);\n");
+    }
+
+    js.push_str(
+        r#"        requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);
 }

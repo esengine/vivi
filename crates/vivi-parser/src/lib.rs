@@ -21,24 +21,27 @@ fn get_std_module(path: &[String]) -> Option<&'static str> {
 }
 
 pub fn parse(source: &str) -> Result<ast::Program, Box<dyn std::error::Error>> {
+    parse_with_modules(source).map(|(program, _)| program)
+}
+
+pub fn parse_with_modules(source: &str) -> Result<(ast::Program, Vec<String>), Box<dyn std::error::Error>> {
     let tokens = lex(source)?;
     let mut parser = parser::Parser::new(tokens, source.to_string());
     let mut program = parser.parse_program()?;
 
-    // Resolve use declarations
-    resolve_uses(&mut program)?;
+    let mut used_modules = Vec::new();
+    resolve_uses(&mut program, &mut used_modules)?;
 
-    Ok(program)
+    Ok((program, used_modules))
 }
 
-fn resolve_uses(program: &mut ast::Program) -> Result<(), Box<dyn std::error::Error>> {
+fn resolve_uses(program: &mut ast::Program, used_modules: &mut Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     let mut resolved: HashSet<String> = HashSet::new();
     let mut i = 0;
     while i < program.items.len() {
         if let ast::Item::Use(use_decl) = &program.items[i] {
             let path_key = use_decl.path.join(".");
             if resolved.contains(&path_key) {
-                // Already imported, skip
                 program.items.remove(i);
                 continue;
             }
@@ -52,17 +55,15 @@ fn resolve_uses(program: &mut ast::Program) -> Result<(), Box<dyn std::error::Er
                 p.parse_program()?
             };
 
-            // Recursively resolve uses in the imported module
-            resolve_uses(&mut module_program)?;
+            resolve_uses(&mut module_program, used_modules)?;
 
-            resolved.insert(path_key);
+            resolved.insert(path_key.clone());
+            used_modules.push(path_key);
 
-            // Replace the Use item with the module's items
             program.items.remove(i);
             for (j, item) in module_program.items.into_iter().enumerate() {
                 program.items.insert(i + j, item);
             }
-            // Don't increment i — re-check from the same position
         } else {
             i += 1;
         }

@@ -58,18 +58,18 @@ enum Commands {
 fn parse_and_resolve(
     input: &PathBuf,
     max_entities: u32,
-) -> miette::Result<(String, vivi_parser::ast::Program, vivi_sema::ResolvedProgram)> {
+) -> miette::Result<(String, vivi_parser::ast::Program, vivi_sema::ResolvedProgram, Vec<String>)> {
     let source = std::fs::read_to_string(input)
         .into_diagnostic()
         .wrap_err_with(|| format!("failed to read `{}`", input.display()))?;
 
-    let program =
-        vivi_parser::parse(&source).map_err(|e| miette::miette!("{e}"))?;
+    let (program, used_modules) =
+        vivi_parser::parse_with_modules(&source).map_err(|e| miette::miette!("{e}"))?;
 
     let resolved = vivi_sema::resolve_with_max(&program, &source, max_entities)
         .map_err(|e| miette::Report::new(e))?;
 
-    Ok((source, program, resolved))
+    Ok((source, program, resolved, used_modules))
 }
 
 fn main() -> miette::Result<()> {
@@ -77,7 +77,7 @@ fn main() -> miette::Result<()> {
 
     match cli.command {
         Commands::Build { input, output, target, max_entities } => {
-            let (source, program, resolved) = parse_and_resolve(&input, max_entities)?;
+            let (source, program, resolved, used_modules) = parse_and_resolve(&input, max_entities)?;
 
             if target == "web" {
                 // --target web: generate dist/ with .wasm + source map + runtime.js + index.html
@@ -121,7 +121,7 @@ fn main() -> miette::Result<()> {
                 std::fs::write(&wasm_path, &wasm_bytes).into_diagnostic()?;
                 std::fs::write(&map_path, &source_map_json).into_diagnostic()?;
                 std::fs::write(&source_path, &source).into_diagnostic()?;
-                std::fs::write(&runtime_path, vivi_web::generate_runtime_js(&resolved, &config)).into_diagnostic()?;
+                std::fs::write(&runtime_path, vivi_web::generate_runtime_js(&resolved, &config, &used_modules)).into_diagnostic()?;
                 std::fs::write(&html_path, vivi_web::generate_index_html(&config)).into_diagnostic()?;
 
                 println!("Built web target -> {}/", out_dir.display());
@@ -155,7 +155,7 @@ fn main() -> miette::Result<()> {
             ticks,
             dump_state,
         } => {
-            let (_source, program, resolved) = parse_and_resolve(&input, vivi_sema::layout::DEFAULT_MAX_ENTITIES)?;
+            let (_source, program, resolved, _used_modules) = parse_and_resolve(&input, vivi_sema::layout::DEFAULT_MAX_ENTITIES)?;
 
             let mut interp = Interpreter::new(&program, &resolved);
 
