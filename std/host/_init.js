@@ -1,12 +1,11 @@
-// Vivi Standard Library — Host Runtime Initialization
-// This file is auto-included by the Vivi compiler for --target web builds.
+// Vivi Runtime — Platform initialization
+// Canvas setup and mouse tracking for shared memory input
 
 const canvas = document.getElementById('vivi-canvas');
 canvas.width = CANVAS_WIDTH;
 canvas.height = CANVAS_HEIGHT;
 const ctx = canvas.getContext('2d');
 
-let currentColor = '#ffffff';
 let mouseX = 0;
 let mouseY = 0;
 
