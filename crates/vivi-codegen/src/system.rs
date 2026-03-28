@@ -245,7 +245,7 @@ fn infer_expr_ty_simple(expr: &Expr, ctx: &ExprCtx) -> Ty {
 
 fn is_void_call(expr: &Expr, void_fns: &HashSet<String>) -> bool {
     if let Expr::Call(name, _, _) = expr {
-        void_fns.contains(name)
+        void_fns.contains(name) || name.starts_with("mem_store")
     } else {
         false
     }

@@ -373,6 +373,32 @@ impl Interpreter {
                 }
             }
             Expr::Call(name, args, _) => {
+                // Built-in memory intrinsics
+                match name.as_str() {
+                    "mem_store_i32" => {
+                        let addr = self.eval_expr(&args[0], locals, each_params, entity_idx).as_i32() as usize;
+                        let val = self.eval_expr(&args[1], locals, each_params, entity_idx).as_i32();
+                        self.memory[addr..addr+4].copy_from_slice(&val.to_le_bytes());
+                        return Value::I32(0);
+                    }
+                    "mem_store_f32" => {
+                        let addr = self.eval_expr(&args[0], locals, each_params, entity_idx).as_i32() as usize;
+                        let val = self.eval_expr(&args[1], locals, each_params, entity_idx).as_f32();
+                        self.memory[addr..addr+4].copy_from_slice(&val.to_le_bytes());
+                        return Value::I32(0);
+                    }
+                    "mem_load_i32" => {
+                        let addr = self.eval_expr(&args[0], locals, each_params, entity_idx).as_i32() as usize;
+                        let val = i32::from_le_bytes(self.memory[addr..addr+4].try_into().unwrap());
+                        return Value::I32(val);
+                    }
+                    "mem_load_f32" => {
+                        let addr = self.eval_expr(&args[0], locals, each_params, entity_idx).as_i32() as usize;
+                        let val = f32::from_le_bytes(self.memory[addr..addr+4].try_into().unwrap());
+                        return Value::F32(val);
+                    }
+                    _ => {}
+                }
                 let arg_values: Vec<Value> = args
                     .iter()
                     .map(|a| self.eval_expr(a, locals, each_params, entity_idx))

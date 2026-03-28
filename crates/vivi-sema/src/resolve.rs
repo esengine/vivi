@@ -702,6 +702,33 @@ fn infer_type(expr: &Expr, ctx: &TypeCtx) -> Result<Ty, SemaError> {
             }
         }
         Expr::Call(name, args, span) => {
+            // Built-in memory intrinsics
+            match name.as_str() {
+                "mem_store_i32" => {
+                    if args.len() != 2 { return Err(SemaError { message: "mem_store_i32 expects 2 arguments".into(), span: span.clone(), label: "here".into(), source_code: ctx.source.to_string() }); }
+                    infer_type(&args[0], ctx)?;
+                    infer_type(&args[1], ctx)?;
+                    return Ok(Ty::I32); // void, returns dummy
+                }
+                "mem_store_f32" => {
+                    if args.len() != 2 { return Err(SemaError { message: "mem_store_f32 expects 2 arguments".into(), span: span.clone(), label: "here".into(), source_code: ctx.source.to_string() }); }
+                    infer_type(&args[0], ctx)?;
+                    infer_type(&args[1], ctx)?;
+                    return Ok(Ty::I32);
+                }
+                "mem_load_i32" => {
+                    if args.len() != 1 { return Err(SemaError { message: "mem_load_i32 expects 1 argument".into(), span: span.clone(), label: "here".into(), source_code: ctx.source.to_string() }); }
+                    infer_type(&args[0], ctx)?;
+                    return Ok(Ty::I32);
+                }
+                "mem_load_f32" => {
+                    if args.len() != 1 { return Err(SemaError { message: "mem_load_f32 expects 1 argument".into(), span: span.clone(), label: "here".into(), source_code: ctx.source.to_string() }); }
+                    infer_type(&args[0], ctx)?;
+                    return Ok(Ty::F32);
+                }
+                _ => {}
+            }
+
             let sig = ctx.functions.get(name).ok_or_else(|| SemaError {
                 message: format!("undefined function `{name}`"),
                 span: span.clone(),

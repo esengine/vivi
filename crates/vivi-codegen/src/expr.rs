@@ -89,11 +89,13 @@ impl<'a> ExprCtx<'a> {
                 self.compile_field_load(obj, field, instrs);
             }
             Expr::Call(name, args, _) => {
-                for arg in args {
-                    self.compile_expr(arg, instrs);
+                if !self.try_compile_builtin(name, args, instrs) {
+                    for arg in args {
+                        self.compile_expr(arg, instrs);
+                    }
+                    let idx = self.fn_index_map[name];
+                    instrs.push(Instruction::Call(idx));
                 }
-                let idx = self.fn_index_map[name];
-                instrs.push(Instruction::Call(idx));
             }
             Expr::BinOp(left, op, right, _) => {
                 self.compile_expr(left, instrs);
@@ -202,6 +204,41 @@ impl<'a> ExprCtx<'a> {
         }
     }
 
+    /// Compile built-in memory intrinsics. Returns true if handled.
+    fn try_compile_builtin(
+        &self,
+        name: &str,
+        args: &[Expr],
+        instrs: &mut Vec<Instruction<'static>>,
+    ) -> bool {
+        let mem4 = wasm_encoder::MemArg { offset: 0, align: 2, memory_index: 0 };
+        match name {
+            "mem_store_i32" if args.len() == 2 => {
+                self.compile_expr(&args[0], instrs); // addr
+                self.compile_expr(&args[1], instrs); // value
+                instrs.push(Instruction::I32Store(mem4));
+                true
+            }
+            "mem_store_f32" if args.len() == 2 => {
+                self.compile_expr(&args[0], instrs);
+                self.compile_expr(&args[1], instrs);
+                instrs.push(Instruction::F32Store(mem4));
+                true
+            }
+            "mem_load_i32" if args.len() == 1 => {
+                self.compile_expr(&args[0], instrs);
+                instrs.push(Instruction::I32Load(mem4));
+                true
+            }
+            "mem_load_f32" if args.len() == 1 => {
+                self.compile_expr(&args[0], instrs);
+                instrs.push(Instruction::F32Load(mem4));
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Determine if an expression produces a float value.
     fn is_float_expr(&self, expr: &Expr) -> bool {
         match expr {
@@ -228,7 +265,7 @@ impl<'a> ExprCtx<'a> {
                     false
                 }
             }
-            Expr::Call(_, _, _) => true, // sema validated; assume float for now
+            Expr::Call(name, _, _) => name == "mem_load_f32" || !name.starts_with("mem_"),
             Expr::BinOp(left, op, _, _) => match op {
                 BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => self.is_float_expr(left),
                 _ => false,
