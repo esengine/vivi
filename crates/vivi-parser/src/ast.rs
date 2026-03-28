@@ -16,6 +16,13 @@ pub enum Item {
     Extern(ExternBlock),
     Entity(EntityDef),
     Global(GlobalDef),
+    Use(UseDecl),
+}
+
+#[derive(Debug, Clone)]
+pub struct UseDecl {
+    pub path: Vec<String>, // e.g. ["std", "render"]
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]

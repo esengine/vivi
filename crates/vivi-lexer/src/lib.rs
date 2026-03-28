@@ -40,6 +40,8 @@ pub enum Token {
     Return,
     #[token("global")]
     Global,
+    #[token("use")]
+    Use,
     #[token("spawn")]
     Spawn,
     #[token("despawn")]
@@ -145,6 +147,7 @@ impl std::fmt::Display for Token {
             Token::Let => write!(f, "let"),
             Token::Return => write!(f, "return"),
             Token::Global => write!(f, "global"),
+            Token::Use => write!(f, "use"),
             Token::Spawn => write!(f, "spawn"),
             Token::Despawn => write!(f, "despawn"),
             Token::True => write!(f, "true"),

@@ -1,0 +1,35 @@
+// Buffered rendering — writes draw commands to shared memory
+// JS runtime reads the buffer after tick() and executes them
+
+global DRAW_BUF_COUNT_ADDR: i32 = 900000
+global DRAW_BUF_ADDR: i32 = 900004
+global current_r: i32 = 255
+global current_g: i32 = 255
+global current_b: i32 = 255
+
+fn set_color(r: i32, g: i32, b: i32) {
+    current_r = r
+    current_g = g
+    current_b = b
+}
+
+fn draw_rect(x: f32, y: f32, w: f32, h: f32) {
+    let count: i32 = mem_load_i32(DRAW_BUF_COUNT_ADDR)
+    let offset: i32 = DRAW_BUF_ADDR + count * 32
+    mem_store_f32(offset, x)
+    mem_store_f32(offset + 4, y)
+    mem_store_f32(offset + 8, w)
+    mem_store_f32(offset + 12, h)
+    mem_store_i32(offset + 16, current_r)
+    mem_store_i32(offset + 20, current_g)
+    mem_store_i32(offset + 24, current_b)
+    mem_store_i32(offset + 28, 0)
+    mem_store_i32(DRAW_BUF_COUNT_ADDR, count + 1)
+}
+
+fn clear_screen() {
+    mem_store_i32(DRAW_BUF_COUNT_ADDR, 0)
+    let offset: i32 = DRAW_BUF_ADDR
+    mem_store_i32(offset + 28, 1)
+    mem_store_i32(DRAW_BUF_COUNT_ADDR, 1)
+}

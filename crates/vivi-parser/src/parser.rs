@@ -47,6 +47,7 @@ impl Parser {
             Some(Token::Extern) => Ok(Item::Extern(self.parse_extern_block()?)),
             Some(Token::EntityKw) => Ok(Item::Entity(self.parse_entity_def()?)),
             Some(Token::Global) => Ok(Item::Global(self.parse_global()?)),
+            Some(Token::Use) => Ok(Item::Use(self.parse_use()?)),
             Some(other) => Err(self.error(format!("expected top-level item, found `{other}`"))),
             None => Err(self.error_eof("expected top-level item")),
         }
@@ -685,6 +686,18 @@ impl Parser {
             components,
             span: start..end,
         })
+    }
+
+    fn parse_use(&mut self) -> Result<UseDecl, ParseError> {
+        let start = self.current_span().start;
+        self.expect(Token::Use)?;
+        let mut path = vec![self.expect_ident()?];
+        while self.check(&Token::Dot) {
+            self.advance();
+            path.push(self.expect_ident()?);
+        }
+        let end = self.previous_span().end;
+        Ok(UseDecl { path, span: start..end })
     }
 
     fn parse_global(&mut self) -> Result<GlobalDef, ParseError> {

@@ -1,0 +1,30 @@
+fn clamp(value: f32, min: f32, max: f32) -> f32 {
+    if value < min { return min }
+    if value > max { return max }
+    return value
+}
+
+fn min_f32(a: f32, b: f32) -> f32 {
+    if a < b { return a }
+    return b
+}
+
+fn max_f32(a: f32, b: f32) -> f32 {
+    if a > b { return a }
+    return b
+}
+
+fn abs_f32(x: f32) -> f32 {
+    if x < 0.0 { return 0.0 - x }
+    return x
+}
+
+fn wrap(value: f32, max: f32) -> f32 {
+    if value > max { return value - max }
+    if value < 0.0 { return value + max }
+    return value
+}
+
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+    return a + (b - a) * t
+}

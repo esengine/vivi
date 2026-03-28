@@ -55,6 +55,7 @@ impl SymbolTable {
                 Item::Global(g) => {
                     self.definitions.insert(g.name.clone(), (uri.to_string(), g.span.start, g.span.end));
                 }
+                Item::Use(_) => {} // resolved at parse time
             }
         }
     }
