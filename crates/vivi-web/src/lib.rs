@@ -152,6 +152,10 @@ pub fn generate_runtime_js(
 
     init();
 
+    let lastTime = performance.now();
+    let frameCount = 0;
+    const hud = document.getElementById('vivi-hud');
+
     function frame() {
         tick();
 "#,
@@ -162,7 +166,22 @@ pub fn generate_runtime_js(
     }
 
     js.push_str(
-        r#"        requestAnimationFrame(frame);
+        r#"        frameCount++;
+        const now = performance.now();
+        if (now - lastTime > 500) {
+            const fps = (frameCount / (now - lastTime) * 1000).toFixed(0);
+            let info = fps + ' FPS';
+            // Read visible count from memory at address 899996 (if available)
+            try {
+                const view = new DataView(memory.buffer);
+                const vc = view.getInt32(899996, true);
+                if (vc > 0) info += ' | ' + vc.toLocaleString() + ' visible';
+            } catch(e) {}
+            if (hud) hud.textContent = info;
+            frameCount = 0;
+            lastTime = now;
+        }
+        requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);
 }
@@ -198,13 +217,18 @@ pub fn generate_index_html(config: &WebBuildConfig) -> String {
         color: #e0e0e0;
     }}
     h1 {{ color: #818cf8; margin-bottom: 1rem; font-size: 1.2rem; }}
-    canvas {{ border: 1px solid #333; }}
+    .canvas-wrap {{ position: relative; display: inline-block; }}
+    canvas {{ border: 1px solid #333; display: block; }}
+    #vivi-hud {{ position: absolute; top: 8px; left: 10px; font-size: 0.8rem; color: #4ade80; text-shadow: 0 0 4px #000; }}
     .footer {{ margin-top: 0.5rem; font-size: 0.75rem; color: #555; }}
 </style>
 </head>
 <body>
 <h1>{title}</h1>
+<div class="canvas-wrap">
 <canvas id="vivi-canvas"></canvas>
+<div id="vivi-hud"></div>
+</div>
 <div class="footer">Powered by Vivi</div>
 <script src="runtime.js"></script>
 </body>
