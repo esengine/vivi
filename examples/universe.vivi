@@ -1,0 +1,189 @@
+// 浩瀚宇宙 — 百万星体 3D 模拟
+// 全部逻辑在 Vivi 中，零 host 调用（除 random）
+
+use std.math
+use std.render
+
+extern host {
+    fn random() -> f32
+}
+
+component Position {
+    x: f32
+    y: f32
+    z: f32
+    pad: f32
+}
+
+component Velocity {
+    dx: f32
+    dy: f32
+    dz: f32
+    pad: f32
+}
+
+component Star {
+    size: f32
+    brightness: f32
+    color_r: i32
+    color_g: i32
+}
+
+// 全局摄像机参数
+global cam_x: f32 = 0.0
+global cam_y: f32 = 0.0
+global cam_z: f32 = -500.0
+global cam_speed: f32 = 0.5
+global tick_count: i32 = 0
+
+// 屏幕中心
+global HALF_W: f32 = 400.0
+global HALF_H: f32 = 300.0
+
+system SpawnUniverse {
+    let i: i32 = 0
+    while i < 100000 {
+        // 在 3D 空间中随机分布
+        let x: f32 = random() * 4000.0 - 2000.0
+        let y: f32 = random() * 4000.0 - 2000.0
+        let z: f32 = random() * 4000.0
+
+        // 缓慢漂移
+        let dx: f32 = random() * 0.2 - 0.1
+        let dy: f32 = random() * 0.2 - 0.1
+        let dz: f32 = random() * 0.1 - 0.05
+
+        // 星星属性
+        let size: f32 = random() * 2.0 + 0.5
+        let brightness: f32 = random() * 155.0 + 100.0
+
+        // 颜色变化：白/蓝/橙/红
+        let color_type: f32 = random()
+        let cr: i32 = 200
+        let cg: i32 = 200
+        if color_type < 0.3 {
+            // 蓝色星
+            cr = 150
+            cg = 180
+        }
+        if color_type > 0.8 {
+            // 橙/红色星
+            cr = 255
+            cg = 150
+        }
+
+        spawn {
+            Position { x: x, y: y, z: z, pad: 0.0 }
+            Velocity { dx: dx, dy: dy, dz: dz, pad: 0.0 }
+            Star { size: size, brightness: brightness, color_r: cr, color_g: cg }
+        }
+        i = i + 1
+    }
+}
+
+system CameraMove {
+    // 摄像机持续向前移动（z 方向）
+    cam_z = cam_z + cam_speed
+    tick_count = tick_count + 1
+
+    // 缓慢横向漂移
+    // 简单周期运动
+    let phase: i32 = tick_count / 100
+    let phase_mod: i32 = phase - phase / 4 * 4
+    if phase_mod == 0 {
+        cam_x = cam_x + 0.3
+    }
+    if phase_mod == 1 {
+        cam_y = cam_y + 0.2
+    }
+    if phase_mod == 2 {
+        cam_x = cam_x - 0.3
+    }
+    if phase_mod == 3 {
+        cam_y = cam_y - 0.2
+    }
+}
+
+system WrapPositions {
+    query {
+        write Position
+    }
+    each(pos: Position) {
+        // 星星超出范围时循环回来（无限空间感）
+        pos.x = wrap(pos.x + 2000.0, 4000.0) - 2000.0
+        pos.y = wrap(pos.y + 2000.0, 4000.0) - 2000.0
+        pos.z = wrap(pos.z, 4000.0)
+    }
+}
+
+system Movement {
+    query {
+        write Position
+        read Velocity
+    }
+    each(pos: Position, vel: Velocity) {
+        pos.x = pos.x + vel.dx
+        pos.y = pos.y + vel.dy
+        pos.z = pos.z + vel.dz
+    }
+}
+
+system ClearAndRender {
+    clear_screen()
+}
+
+system Render3D {
+    query {
+        read Position
+        read Star
+    }
+    each(pos: Position, star: Star) {
+        // 3D → 2D 透视投影
+        let rel_z: f32 = pos.z - cam_z
+        // 循环 z 到 0..4000 范围
+        rel_z = wrap(rel_z + 4000.0, 4000.0)
+
+        // 跳过太近的（避免除零和巨大投影）
+        if rel_z > 10.0 {
+            let scale: f32 = 300.0 / rel_z
+
+            let screen_x: f32 = (pos.x - cam_x) * scale + HALF_W
+            let screen_y: f32 = (pos.y - cam_y) * scale + HALF_H
+
+            // 只渲染屏幕内的
+            if screen_x > -10.0 {
+                if screen_x < 810.0 {
+                    if screen_y > -10.0 {
+                        if screen_y < 610.0 {
+                            let s: f32 = star.size * scale
+                            if s < 1.0 { s = 1.0 }
+                            if s > 6.0 { s = 6.0 }
+
+                            // 简单亮度：近亮远暗
+                            let bright: i32 = star.color_r
+                            if rel_z > 2000.0 { bright = bright / 2 }
+                            if rel_z > 3000.0 { bright = bright / 2 }
+                            if bright < 20 { bright = 20 }
+
+                            set_color(star.color_r * bright / 255, star.color_g * bright / 255, bright)
+                            draw_rect(screen_x, screen_y, s, s)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+world Universe {
+    init {
+        SpawnUniverse
+    }
+    systems {
+        CameraMove
+        Movement
+        WrapPositions
+        ClearAndRender
+        Render3D
+    }
+}

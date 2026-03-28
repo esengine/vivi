@@ -68,18 +68,9 @@ pub fn compile_system(
 
     instrs.push(Instruction::End); // end function
 
-    // Build locals: entity_index (i32) + user locals
+    // Build locals: entity_index (i32) + user locals in index order
     let mut local_groups: Vec<(u32, ValType)> = vec![(1, ValType::I32)]; // entity_index
-    let mut i32_count = 0u32;
-    let mut f32_count = 0u32;
-    for local in ctx.locals.values() {
-        match local.ty {
-            Ty::F32 => f32_count += 1,
-            _ => i32_count += 1,
-        }
-    }
-    if i32_count > 0 { local_groups.push((i32_count, ValType::I32)); }
-    if f32_count > 0 { local_groups.push((f32_count, ValType::F32)); }
+    local_groups.extend(build_local_groups(&ctx, 1));
 
     let mut func = Function::new(local_groups);
     for instr in &instrs {
@@ -104,20 +95,31 @@ pub fn compile_stmts_with_mappings(
 }
 
 /// Build WASM local declaration groups from ExprCtx, skipping indices < skip_count.
+/// Locals must be declared in index order to match alloc_local's sequential assignment.
 pub fn build_local_groups(ctx: &ExprCtx, skip_count: u32) -> Vec<(u32, ValType)> {
-    let mut i32_count = 0u32;
-    let mut f32_count = 0u32;
-    for local in ctx.locals.values() {
-        if local.index >= skip_count {
-            match local.ty {
-                Ty::F32 => f32_count += 1,
-                _ => i32_count += 1,
+    // Collect locals sorted by index
+    let mut sorted: Vec<_> = ctx.locals.values()
+        .filter(|l| l.index >= skip_count)
+        .collect();
+    sorted.sort_by_key(|l| l.index);
+
+    // Group consecutive same-type locals
+    let mut groups: Vec<(u32, ValType)> = Vec::new();
+    for local in sorted {
+        let vt = match local.ty {
+            Ty::F32 => ValType::F32,
+            Ty::F64 => ValType::F64,
+            Ty::I64 => ValType::I64,
+            _ => ValType::I32,
+        };
+        if let Some(last) = groups.last_mut() {
+            if last.1 == vt {
+                last.0 += 1;
+                continue;
             }
         }
+        groups.push((1, vt));
     }
-    let mut groups = Vec::new();
-    if i32_count > 0 { groups.push((i32_count, ValType::I32)); }
-    if f32_count > 0 { groups.push((f32_count, ValType::F32)); }
     groups
 }
 

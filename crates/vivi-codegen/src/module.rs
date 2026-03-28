@@ -272,8 +272,8 @@ fn generate_wasm_with_mappings(
         func_idx += 1;
     }
 
-    // System function names
-    for sys_name in &resolved.world_systems {
+    // System function names (must match all_system_names order)
+    for sys_name in &all_system_names {
         func_names.append(func_idx, &format!("system_{sys_name}"));
         func_idx += 1;
     }
