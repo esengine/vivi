@@ -568,4 +568,209 @@ world Game {
         // 3^2 + 4^2 = 9 + 16 = 25
         assert!((n - 25.0).abs() < 1e-6, "expected n=25.0, got {n}");
     }
+
+    #[test]
+    fn test_despawn() {
+        // Spawn 4 entities, 2 with negative health.
+        // A system despawns entities with health < 0.
+        // After one tick, 2 entities should remain.
+        let source = r#"
+component Health {
+    hp: i32
+    unused: i32
+}
+
+system RemoveDead {
+    query {
+        read Health
+    }
+    each(h: Health) {
+        if h.hp < 0 {
+            despawn
+        }
+    }
+}
+
+world Game {
+    systems {
+        RemoveDead
+    }
+}
+"#;
+        let wasm_bytes = compile_vivi(source);
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm_bytes).unwrap();
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).unwrap();
+
+        let init = instance.get_typed_func::<(), ()>(&mut store, "init").unwrap();
+        let tick = instance.get_typed_func::<(), ()>(&mut store, "tick").unwrap();
+        let memory = instance.get_memory(&mut store, "memory").unwrap();
+
+        init.call(&mut store, ()).unwrap();
+
+        let hp_off = 4usize;
+        let unused_off = 4 + (MAX_ENTITIES as usize) * 4;
+
+        let data = memory.data_mut(&mut store);
+        // Set entity_count = 4
+        data[0..4].copy_from_slice(&4i32.to_le_bytes());
+
+        // Entity 0: hp = 10 (alive)
+        data[hp_off..hp_off + 4].copy_from_slice(&10i32.to_le_bytes());
+        data[unused_off..unused_off + 4].copy_from_slice(&0i32.to_le_bytes());
+        // Entity 1: hp = -5 (dead)
+        data[hp_off + 4..hp_off + 8].copy_from_slice(&(-5i32).to_le_bytes());
+        data[unused_off + 4..unused_off + 8].copy_from_slice(&0i32.to_le_bytes());
+        // Entity 2: hp = 20 (alive)
+        data[hp_off + 8..hp_off + 12].copy_from_slice(&20i32.to_le_bytes());
+        data[unused_off + 8..unused_off + 12].copy_from_slice(&0i32.to_le_bytes());
+        // Entity 3: hp = -1 (dead)
+        data[hp_off + 12..hp_off + 16].copy_from_slice(&(-1i32).to_le_bytes());
+        data[unused_off + 12..unused_off + 16].copy_from_slice(&0i32.to_le_bytes());
+
+        tick.call(&mut store, ()).unwrap();
+
+        let data = memory.data(&store);
+        let entity_count = i32::from_le_bytes(data[0..4].try_into().unwrap());
+        assert_eq!(entity_count, 2, "expected 2 entities after despawn, got {entity_count}");
+
+        // Verify remaining entities all have positive hp
+        for i in 0..entity_count as usize {
+            let hp = i32::from_le_bytes(
+                data[hp_off + i * 4..hp_off + i * 4 + 4].try_into().unwrap(),
+            );
+            assert!(hp > 0, "entity {i} should have positive hp, got {hp}");
+        }
+    }
+
+    #[test]
+    fn test_global_variable() {
+        // A global counter increments by 1 for each entity each tick.
+        // With 3 entities and 2 ticks, the counter should be 6.
+        let source = r#"
+global counter: i32 = 0
+
+component Tag {
+    id: i32
+    unused: i32
+}
+
+system Count {
+    query {
+        read Tag
+    }
+    each(t: Tag) {
+        counter = counter + 1
+    }
+}
+
+world Game {
+    systems {
+        Count
+    }
+}
+"#;
+        let wasm_bytes = compile_vivi(source);
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm_bytes).unwrap();
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).unwrap();
+
+        let init = instance.get_typed_func::<(), ()>(&mut store, "init").unwrap();
+        let tick = instance.get_typed_func::<(), ()>(&mut store, "tick").unwrap();
+        let memory = instance.get_memory(&mut store, "memory").unwrap();
+
+        init.call(&mut store, ()).unwrap();
+
+        // Set up 3 entities
+        let data = memory.data_mut(&mut store);
+        data[0..4].copy_from_slice(&3i32.to_le_bytes());
+
+        // Run 2 ticks
+        tick.call(&mut store, ()).unwrap();
+        tick.call(&mut store, ()).unwrap();
+
+        // The global counter is stored after all component data.
+        // Components: Tag has 2 fields (id: i32, unused: i32)
+        // Layout: [0..4] entity_count
+        //         [4 .. 4 + MAX*4] Tag_id
+        //         [4 + MAX*4 .. 4 + MAX*8] Tag_unused
+        //         [4 + MAX*8 ..] globals
+        let global_offset = 4 + (MAX_ENTITIES as usize) * 8;
+        let data = memory.data(&store);
+        let counter = i32::from_le_bytes(
+            data[global_offset..global_offset + 4].try_into().unwrap(),
+        );
+        // 3 entities * 2 ticks = 6
+        assert_eq!(counter, 6, "expected counter=6, got {counter}");
+    }
+
+    #[test]
+    fn test_use_std_math() {
+        // Use std.math's clamp function via the module system
+        let source = r#"
+use std.math
+
+component Value {
+    x: f32
+    unused: f32
+}
+
+system ClampValues {
+    query {
+        write Value
+    }
+    each(v: Value) {
+        v.x = clamp(v.x, 0.0, 100.0)
+    }
+}
+
+world Game {
+    systems {
+        ClampValues
+    }
+}
+"#;
+        let wasm_bytes = compile_vivi(source);
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm_bytes).unwrap();
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).unwrap();
+
+        let init = instance.get_typed_func::<(), ()>(&mut store, "init").unwrap();
+        let tick = instance.get_typed_func::<(), ()>(&mut store, "tick").unwrap();
+        let memory = instance.get_memory(&mut store, "memory").unwrap();
+
+        init.call(&mut store, ()).unwrap();
+
+        let x_off = 4usize;
+
+        // Set up 1 entity with x = 999.0 (should be clamped to 100.0)
+        let data = memory.data_mut(&mut store);
+        data[0..4].copy_from_slice(&1i32.to_le_bytes());
+        data[x_off..x_off + 4].copy_from_slice(&999.0f32.to_le_bytes());
+
+        tick.call(&mut store, ()).unwrap();
+
+        let data = memory.data(&store);
+        let x = f32::from_le_bytes(data[x_off..x_off + 4].try_into().unwrap());
+        assert!(
+            (x - 100.0).abs() < 1e-6,
+            "expected x=100.0 (clamped), got {x}"
+        );
+
+        // Now set x = -50.0 (should be clamped to 0.0)
+        let data = memory.data_mut(&mut store);
+        data[x_off..x_off + 4].copy_from_slice(&(-50.0f32).to_le_bytes());
+
+        tick.call(&mut store, ()).unwrap();
+
+        let data = memory.data(&store);
+        let x = f32::from_le_bytes(data[x_off..x_off + 4].try_into().unwrap());
+        assert!(
+            (x - 0.0).abs() < 1e-6,
+            "expected x=0.0 (clamped), got {x}"
+        );
+    }
 }
