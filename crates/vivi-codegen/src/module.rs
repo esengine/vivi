@@ -155,6 +155,19 @@ fn generate_wasm_with_mappings(
         .map(|g| (g.name.clone(), crate::expr::GlobalVar { offset: g.offset, ty: g.ty.clone() }))
         .collect();
 
+    // Build function return type map for accurate type inference in codegen
+    let mut fn_return_types: HashMap<String, vivi_sema::types::Ty> = HashMap::new();
+    for sig in &resolved.functions {
+        if let Some(ty) = &sig.return_ty {
+            fn_return_types.insert(sig.name.clone(), ty.clone());
+        }
+    }
+    for efn in &resolved.extern_fns {
+        if let Some(ty) = &efn.return_ty {
+            fn_return_types.insert(efn.name.clone(), ty.clone());
+        }
+    }
+
     // Build void function set
     let mut void_fns: HashSet<String> = HashSet::new();
     for efn in &resolved.extern_fns {
@@ -185,7 +198,7 @@ fn generate_wasm_with_mappings(
             })
             .unwrap();
         let mut fm = FuncMappings::default();
-        let func = compile_user_fn(sig, &ast_fn.body, &resolved.layout, &fn_index_map, &void_fns, &globals_map, src, &mut fm);
+        let func = compile_user_fn(sig, &ast_fn.body, &resolved.layout, &fn_index_map, &void_fns, &globals_map, &fn_return_types, src, &mut fm);
         codes.function(&func);
         module_mappings.functions.push(fm);
     }
@@ -209,10 +222,10 @@ fn generate_wasm_with_mappings(
             .unwrap();
         let mut fm = FuncMappings::default();
         let func = if let Some(each) = &ast_system.each {
-            compile_system(sys_info, &each.body, &resolved.layout, &fn_index_map, &void_fns, &globals_map, src, &mut fm)
+            compile_system(sys_info, &each.body, &resolved.layout, &fn_index_map, &void_fns, &globals_map, &fn_return_types, src, &mut fm)
         } else {
             // Bare system: compile as system without entity loop (has layout for spawn)
-            compile_system(sys_info, &ast_system.body, &resolved.layout, &fn_index_map, &void_fns, &globals_map, src, &mut fm)
+            compile_system(sys_info, &ast_system.body, &resolved.layout, &fn_index_map, &void_fns, &globals_map, &fn_return_types, src, &mut fm)
         };
         codes.function(&func);
         module_mappings.functions.push(fm);

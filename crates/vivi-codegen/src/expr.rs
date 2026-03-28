@@ -29,6 +29,7 @@ pub struct ExprCtx<'a> {
     pub fn_index_map: &'a HashMap<String, u32>,
     pub void_fns: &'a HashSet<String>,
     pub globals: &'a HashMap<String, GlobalVar>,
+    pub fn_return_types: &'a HashMap<String, Ty>,
 }
 
 impl<'a> ExprCtx<'a> {
@@ -39,6 +40,7 @@ impl<'a> ExprCtx<'a> {
         fn_index_map: &'a HashMap<String, u32>,
         void_fns: &'a HashSet<String>,
         globals: &'a HashMap<String, GlobalVar>,
+        fn_return_types: &'a HashMap<String, Ty>,
     ) -> Self {
         Self {
             layout,
@@ -49,6 +51,7 @@ impl<'a> ExprCtx<'a> {
             fn_index_map,
             void_fns,
             globals,
+            fn_return_types,
         }
     }
 
@@ -265,7 +268,11 @@ impl<'a> ExprCtx<'a> {
                     false
                 }
             }
-            Expr::Call(name, _, _) => name == "mem_load_f32" || !name.starts_with("mem_"),
+            Expr::Call(name, _, _) => {
+                if name == "mem_load_f32" { return true; }
+                if name == "mem_load_i32" || name.starts_with("mem_store") { return false; }
+                self.fn_return_types.get(name).map_or(false, |ty| ty.is_float())
+            }
             Expr::BinOp(left, op, _, _) => match op {
                 BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => self.is_float_expr(left),
                 _ => false,

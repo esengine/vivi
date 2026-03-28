@@ -17,12 +17,13 @@ pub fn compile_system(
     fn_index_map: &HashMap<String, u32>,
     void_fns: &HashSet<String>,
     globals: &HashMap<String, crate::expr::GlobalVar>,
+    fn_return_types: &HashMap<String, Ty>,
     source: &str,
     func_mappings: &mut FuncMappings,
 ) -> Function {
     let is_bare = sys.each_params.is_empty();
     let entity_index_local: u32 = 0;
-    let mut ctx = ExprCtx::new(layout, &sys.each_params, entity_index_local, fn_index_map, void_fns, globals);
+    let mut ctx = ExprCtx::new(layout, &sys.each_params, entity_index_local, fn_index_map, void_fns, globals, fn_return_types);
 
     let mut instrs: Vec<Instruction<'static>> = Vec::new();
 
@@ -237,7 +238,11 @@ fn infer_expr_ty_simple(expr: &Expr, ctx: &ExprCtx) -> Ty {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => infer_expr_ty_simple(left, ctx),
             _ => Ty::Bool,
         },
-        Expr::Call(_, _, _) => Ty::F32, // sema validated; return type used at call site
+        Expr::Call(name, _, _) => {
+            if name == "mem_load_f32" { return Ty::F32; }
+            if name == "mem_load_i32" || name.starts_with("mem_store") { return Ty::I32; }
+            ctx.fn_return_types.get(name).cloned().unwrap_or(Ty::I32)
+        }
         Expr::UnaryOp(UnaryOp::Neg, inner, _) => infer_expr_ty_simple(inner, ctx),
         Expr::UnaryOp(UnaryOp::Not, _, _) => Ty::Bool,
     }
