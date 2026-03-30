@@ -184,9 +184,12 @@ pub fn resolve_with_max(program: &Program, source: &str, max_entities: u32) -> R
     }
 
     // Build globals type map for type checking
-    let globals_type_map: HashMap<String, Ty> = globals.iter()
+    let mut globals_type_map: HashMap<String, Ty> = globals.iter()
         .map(|g| (g.name.clone(), g.ty.clone()))
         .collect();
+
+    // Pre-register __heap_base so std libraries can reference it during type checking
+    globals_type_map.insert("__heap_base".to_string(), Ty::I32);
 
     // Collect extern functions
     for item in &program.items {
@@ -484,6 +487,17 @@ pub fn resolve_with_max(program: &Program, source: &str, max_entities: u32) -> R
         g.offset = layout.total_bytes;
         layout.total_bytes += g.ty.byte_size();
     }
+
+    // Auto-inject __heap_base: points to free memory AFTER this global itself
+    let heap_base_offset = layout.total_bytes;
+    globals.push(GlobalInfo {
+        name: "__heap_base".to_string(),
+        ty: Ty::I32,
+        init_value: FieldValue::I32((heap_base_offset + 4) as i32), // skip past own storage
+        offset: heap_base_offset,
+    });
+    globals_type_map.insert("__heap_base".to_string(), Ty::I32);
+    layout.total_bytes += 4;
 
     Ok(ResolvedProgram {
         components: ordered_components,

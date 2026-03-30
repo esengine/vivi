@@ -135,6 +135,13 @@ pub fn generate_runtime_js(
     let uses_render = used_std_modules.iter().any(|m| m == "std.render");
 
     if uses_render {
+        // Pass __heap_base to render driver
+        let heap_base = resolved.globals.iter()
+            .find(|g| g.name == "__heap_base")
+            .map(|g| g.offset)
+            .unwrap_or(0);
+        js.push_str(&format!("const __HEAP_BASE_OFFSET = {};\n\n", heap_base));
+
         // Include render driver from std/host/render.js
         for (_module, source) in load_std_host_sources() {
             if _module == "render" {

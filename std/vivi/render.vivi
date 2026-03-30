@@ -1,11 +1,18 @@
 // Buffered rendering — writes draw commands to shared memory
-// JS runtime reads the buffer after tick() and executes them
+// Buffer placed at __heap_base (set by compiler, after all component data)
 
-global DRAW_BUF_COUNT_ADDR: i32 = 900000
-global DRAW_BUF_ADDR: i32 = 900004
+global __draw_buf_base: i32 = 0
+global __draw_buf_ready: i32 = 0
 global current_r: i32 = 255
 global current_g: i32 = 255
 global current_b: i32 = 255
+
+fn __ensure_draw_buf() {
+    if __draw_buf_ready == 0 {
+        __draw_buf_base = __heap_base + 4
+        __draw_buf_ready = 1
+    }
+}
 
 fn set_color(r: i32, g: i32, b: i32) {
     current_r = r
@@ -14,8 +21,9 @@ fn set_color(r: i32, g: i32, b: i32) {
 }
 
 fn draw_rect(x: f32, y: f32, w: f32, h: f32) {
-    let count: i32 = mem_load_i32(DRAW_BUF_COUNT_ADDR)
-    let offset: i32 = DRAW_BUF_ADDR + count * 32
+    __ensure_draw_buf()
+    let count: i32 = mem_load_i32(__heap_base)
+    let offset: i32 = __draw_buf_base + count * 32
     mem_store_f32(offset, x)
     mem_store_f32(offset + 4, y)
     mem_store_f32(offset + 8, w)
@@ -24,12 +32,12 @@ fn draw_rect(x: f32, y: f32, w: f32, h: f32) {
     mem_store_i32(offset + 20, current_g)
     mem_store_i32(offset + 24, current_b)
     mem_store_i32(offset + 28, 0)
-    mem_store_i32(DRAW_BUF_COUNT_ADDR, count + 1)
+    mem_store_i32(__heap_base, count + 1)
 }
 
 fn clear_screen() {
-    mem_store_i32(DRAW_BUF_COUNT_ADDR, 0)
-    let offset: i32 = DRAW_BUF_ADDR
-    mem_store_i32(offset + 28, 1)
-    mem_store_i32(DRAW_BUF_COUNT_ADDR, 1)
+    __ensure_draw_buf()
+    mem_store_i32(__heap_base, 0)
+    mem_store_i32(__draw_buf_base + 28, 1)
+    mem_store_i32(__heap_base, 1)
 }

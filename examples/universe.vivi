@@ -1,5 +1,5 @@
-// Universe - million star voyage
-// JS reads Position SoA data directly for WebGL rendering
+// Universe - 800K stars, direct SoA rendering
+// Vivi computes screen positions into components, JS reads directly
 
 extern host {
     fn random() -> f32
@@ -11,102 +11,125 @@ fn wrap(value: f32, max: f32) -> f32 {
     return value
 }
 
-component Position {
+component Star3D {
     x: f32
     y: f32
     z: f32
-    screen_x: f32
+    base_size: f32
 }
 
-component ScreenInfo {
-    screen_y: f32
+component StarDrift {
+    dx: f32
+    dy: f32
+    pad1: f32
+    pad2: f32
+}
+
+// Screen-space output (JS reads these directly via SoA)
+component Screen {
+    sx: f32
+    sy: f32
     size: f32
+    bright: f32
+}
+
+component Color {
     r: i32
     g: i32
+    b: i32
+    pad: i32
 }
 
-// Camera
 global cam_z: f32 = 0.0
-global VISIBLE_ADDR: i32 = 899996
 
 system SpawnStars {
     let i: i32 = 0
-    while i < 500000 {
-        let x: f32 = random() * 8000.0 - 4000.0
-        let y: f32 = random() * 8000.0 - 4000.0
-        let z: f32 = random() * 10000.0
+    while i < 800000 {
+        let x: f32 = random() * 4000.0 - 2000.0
+        let y: f32 = random() * 4000.0 - 2000.0
+        let z: f32 = random() * 15000.0
+        let size: f32 = random() * random() * 3.5 + 0.3
+        let dx: f32 = random() * 0.04 - 0.02
+        let dy: f32 = random() * 0.04 - 0.02
 
-        let size: f32 = random() * random() * 3.0 + 0.5
-
-        // Color: blue/white/yellow/red
         let tr: f32 = random()
-        let r: i32 = 200
-        let g: i32 = 200
-        if tr < 0.2 {
+        let r: i32 = 230
+        let g: i32 = 230
+        let b: i32 = 255
+        if tr < 0.15 {
             r = 160
             g = 190
+            b = 255
         }
-        if tr > 0.8 {
+        if tr > 0.7 {
             r = 255
-            g = 180
+            g = 210
+            b = 160
         }
-        if tr > 0.95 {
+        if tr > 0.92 {
             r = 255
-            g = 120
+            g = 140
+            b = 90
         }
 
         spawn {
-            Position { x: x, y: y, z: z, screen_x: -1.0 }
-            ScreenInfo { screen_y: -1.0, size: size, r: r, g: g }
+            Star3D { x: x, y: y, z: z, base_size: size }
+            StarDrift { dx: dx, dy: dy, pad1: 0.0, pad2: 0.0 }
+            Screen { sx: -1.0, sy: 0.0, size: 0.0, bright: 0.0 }
+            Color { r: r, g: g, b: b, pad: 0 }
         }
         i = i + 1
     }
 }
 
-system CameraMove {
-    cam_z = cam_z + 3.0
-}
-
-system WrapAndProject {
+system Update {
     query {
-        write Position
-        write ScreenInfo
+        write Star3D
+        write Screen
+        read StarDrift
     }
-    each(pos: Position, scr: ScreenInfo) {
-        // Keep star in front of camera
-        let rel_z: f32 = pos.z - cam_z
-        pos.z = cam_z + wrap(rel_z + 10000.0, 10000.0)
-        rel_z = pos.z - cam_z
+    each(star: Star3D, scr: Screen, drift: StarDrift) {
+        star.x = star.x + drift.dx
+        star.y = star.y + drift.dy
 
-        // 3D perspective projection
-        if rel_z > 10.0 {
-            let scale: f32 = 500.0 / rel_z
-            pos.screen_x = pos.x * scale + 400.0
-            scr.screen_y = pos.y * scale + 300.0
+        let rel_z: f32 = star.z - cam_z
+        if rel_z < 0.0 { rel_z = rel_z + 15000.0 }
+        if rel_z > 15000.0 { rel_z = rel_z - 15000.0 }
+        star.z = cam_z + rel_z
 
-            // Distance fade
-            let s: f32 = scr.size * scale
-            if s < 0.5 { s = 0.5 }
-            if s > 6.0 { s = 6.0 }
-            scr.size = s
+        scr.sx = -1.0
 
-            // Visibility (screen_x < 0 = invisible)
-            if pos.screen_x < -10.0 { pos.screen_x = -1.0 }
-            if pos.screen_x > 810.0 { pos.screen_x = -1.0 }
-            if scr.screen_y < -10.0 { pos.screen_x = -1.0 }
-            if scr.screen_y > 610.0 { pos.screen_x = -1.0 }
-        } else {
-            pos.screen_x = -1.0
+        if rel_z > 20.0 {
+            if rel_z < 12000.0 {
+                let scale: f32 = 600.0 / rel_z
+                let sx: f32 = star.x * scale + 400.0
+                let sy: f32 = star.y * scale + 300.0
+
+                if sx > -5.0 {
+                    if sx < 805.0 {
+                        if sy > -5.0 {
+                            if sy < 605.0 {
+                                scr.sx = sx
+                                scr.sy = sy
+                                let s: f32 = star.base_size * scale
+                                if s > 6.0 { s = 6.0 }
+                                scr.size = s
+                                let t: f32 = rel_z / 15000.0
+                                scr.bright = (1.0 - t) * (1.0 - t)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
+system CameraMove {
+    cam_z = cam_z + 2.5
+}
+
 world Universe {
-    init {
-        SpawnStars
-    }
-    systems {
-        CameraMove
-        WrapAndProject
-    }
+    init { SpawnStars }
+    systems { CameraMove, Update }
 }

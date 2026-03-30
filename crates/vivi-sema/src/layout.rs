@@ -71,7 +71,9 @@ impl MemoryLayout {
     }
 
     /// Required WASM memory pages (64KB each).
+    /// Includes headroom for user memory buffers (render commands, etc.)
     pub fn required_pages(&self) -> u32 {
-        (self.total_bytes + 65535) / 65536
+        let with_headroom = self.total_bytes + 32 * 1024 * 1024; // 32MB headroom
+        (with_headroom + 65535) / 65536
     }
 }
