@@ -153,7 +153,7 @@ fn compile_stmt(stmt: &Stmt, ctx: &mut ExprCtx, instrs: &mut Vec<Instruction<'st
                 Ty::from_ast(ast_ty)
             } else {
                 // Infer: float literal → f32, int literal → i32, etc.
-                infer_expr_ty_simple(&let_stmt.value, ctx)
+                ctx.infer_expr_ty(&let_stmt.value)
             };
             let index = ctx.alloc_local(let_stmt.name.clone(), ty);
             ctx.compile_expr(&let_stmt.value, instrs);
@@ -209,44 +209,6 @@ fn compile_stmt(stmt: &Stmt, ctx: &mut ExprCtx, instrs: &mut Vec<Instruction<'st
         Stmt::Return(None, _) => {
             instrs.push(Instruction::Return);
         }
-    }
-}
-
-/// Simple type inference for codegen (sema already validated types).
-fn infer_expr_ty_simple(expr: &Expr, ctx: &ExprCtx) -> Ty {
-    match expr {
-        Expr::FloatLit(_, _) => Ty::F32,
-        Expr::IntLit(_, _) => Ty::I32,
-        Expr::BoolLit(_, _) => Ty::Bool,
-        Expr::Ident(name, _) => {
-            if let Some(l) = ctx.locals.get(name) {
-                l.ty.clone()
-            } else if let Some(g) = ctx.globals.get(name) {
-                g.ty.clone()
-            } else {
-                Ty::I32
-            }
-        }
-        Expr::FieldAccess(obj, field, _) => {
-            if let Expr::Ident(param_name, _) = obj.as_ref() {
-                if let Some(param) = ctx.params.iter().find(|p| p.name == *param_name) {
-                    let comp = ctx.layout.get_component(&param.component).unwrap();
-                    return comp.fields.iter().find(|f| f.name == *field).unwrap().ty.clone();
-                }
-            }
-            Ty::I32
-        }
-        Expr::BinOp(left, op, _, _) => match op {
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => infer_expr_ty_simple(left, ctx),
-            _ => Ty::Bool,
-        },
-        Expr::Call(name, _, _) => {
-            if name == "mem_load_f32" { return Ty::F32; }
-            if name == "mem_load_i32" || name.starts_with("mem_store") { return Ty::I32; }
-            ctx.fn_return_types.get(name).cloned().unwrap_or(Ty::I32)
-        }
-        Expr::UnaryOp(UnaryOp::Neg, inner, _) => infer_expr_ty_simple(inner, ctx),
-        Expr::UnaryOp(UnaryOp::Not, _, _) => Ty::Bool,
     }
 }
 

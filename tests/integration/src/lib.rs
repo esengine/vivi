@@ -773,4 +773,319 @@ world Game {
             "expected x=0.0 (clamped), got {x}"
         );
     }
+
+    #[test]
+    fn test_spawn_in_system() {
+        // Spawn 3 entities in a bare init system, verify entity_count = 3 after init.
+        let source = r#"
+component Position {
+    x: f32
+    y: f32
+}
+
+system Setup {
+    spawn {
+        Position { x: 1.0, y: 2.0 }
+    }
+    spawn {
+        Position { x: 3.0, y: 4.0 }
+    }
+    spawn {
+        Position { x: 5.0, y: 6.0 }
+    }
+}
+
+world Game {
+    init {
+        Setup
+    }
+    systems {
+    }
+}
+"#;
+        let wasm_bytes = compile_vivi(source);
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm_bytes).unwrap();
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).unwrap();
+
+        let init = instance.get_typed_func::<(), ()>(&mut store, "init").unwrap();
+        let memory = instance.get_memory(&mut store, "memory").unwrap();
+
+        init.call(&mut store, ()).unwrap();
+
+        let data = memory.data(&store);
+        let entity_count = i32::from_le_bytes(data[0..4].try_into().unwrap());
+        assert_eq!(entity_count, 3, "expected 3 entities after init, got {entity_count}");
+
+        // Verify spawned field values
+        let pos_x_off = 4usize;
+        let pos_y_off = 4 + (MAX_ENTITIES as usize) * 4;
+
+        let x0 = f32::from_le_bytes(data[pos_x_off..pos_x_off + 4].try_into().unwrap());
+        let y0 = f32::from_le_bytes(data[pos_y_off..pos_y_off + 4].try_into().unwrap());
+        let x1 = f32::from_le_bytes(data[pos_x_off + 4..pos_x_off + 8].try_into().unwrap());
+        let y1 = f32::from_le_bytes(data[pos_y_off + 4..pos_y_off + 8].try_into().unwrap());
+        let x2 = f32::from_le_bytes(data[pos_x_off + 8..pos_x_off + 12].try_into().unwrap());
+        let y2 = f32::from_le_bytes(data[pos_y_off + 8..pos_y_off + 12].try_into().unwrap());
+
+        assert!((x0 - 1.0).abs() < 1e-6, "entity 0 x: expected 1.0, got {x0}");
+        assert!((y0 - 2.0).abs() < 1e-6, "entity 0 y: expected 2.0, got {y0}");
+        assert!((x1 - 3.0).abs() < 1e-6, "entity 1 x: expected 3.0, got {x1}");
+        assert!((y1 - 4.0).abs() < 1e-6, "entity 1 y: expected 4.0, got {y1}");
+        assert!((x2 - 5.0).abs() < 1e-6, "entity 2 x: expected 5.0, got {x2}");
+        assert!((y2 - 6.0).abs() < 1e-6, "entity 2 y: expected 6.0, got {y2}");
+    }
+
+    #[test]
+    fn test_bare_system() {
+        // A bare system (no query/each) that increments a global counter.
+        // Run 3 ticks, read the counter via a component field, verify it's 3.
+        let source = r#"
+global counter: i32 = 0
+
+component Result {
+    value: i32
+    unused: i32
+}
+
+system Increment {
+    counter = counter + 1
+}
+
+system CopyCounter {
+    query { write Result }
+    each(r: Result) {
+        r.value = counter
+    }
+}
+
+world Game {
+    systems {
+        Increment
+        CopyCounter
+    }
+}
+"#;
+        let wasm_bytes = compile_vivi(source);
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm_bytes).unwrap();
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).unwrap();
+
+        let init = instance.get_typed_func::<(), ()>(&mut store, "init").unwrap();
+        let tick = instance.get_typed_func::<(), ()>(&mut store, "tick").unwrap();
+        let memory = instance.get_memory(&mut store, "memory").unwrap();
+
+        init.call(&mut store, ()).unwrap();
+
+        // Set up 1 entity so CopyCounter has something to iterate
+        let data = memory.data_mut(&mut store);
+        data[0..4].copy_from_slice(&1i32.to_le_bytes());
+
+        // Run 3 ticks
+        tick.call(&mut store, ()).unwrap();
+        tick.call(&mut store, ()).unwrap();
+        tick.call(&mut store, ()).unwrap();
+
+        let data = memory.data(&store);
+        let value_off = 4usize;
+        let value = i32::from_le_bytes(data[value_off..value_off + 4].try_into().unwrap());
+        assert_eq!(value, 3, "expected counter=3 after 3 ticks, got {value}");
+    }
+
+    #[test]
+    fn test_init_block() {
+        // World with init { Setup } and systems { Process }.
+        // Setup spawns 2 entities, Process increments their values.
+        let source = r#"
+component Data {
+    value: i32
+    unused: i32
+}
+
+system Setup {
+    spawn {
+        Data { value: 10, unused: 0 }
+    }
+    spawn {
+        Data { value: 20, unused: 0 }
+    }
+}
+
+system Process {
+    query { write Data }
+    each(d: Data) {
+        d.value = d.value + 5
+    }
+}
+
+world Game {
+    init {
+        Setup
+    }
+    systems {
+        Process
+    }
+}
+"#;
+        let wasm_bytes = compile_vivi(source);
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm_bytes).unwrap();
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).unwrap();
+
+        let init = instance.get_typed_func::<(), ()>(&mut store, "init").unwrap();
+        let tick = instance.get_typed_func::<(), ()>(&mut store, "tick").unwrap();
+        let memory = instance.get_memory(&mut store, "memory").unwrap();
+
+        init.call(&mut store, ()).unwrap();
+
+        // After init, Setup should have spawned 2 entities
+        let data = memory.data(&store);
+        let entity_count = i32::from_le_bytes(data[0..4].try_into().unwrap());
+        assert_eq!(entity_count, 2, "expected 2 entities after init, got {entity_count}");
+
+        let value_off = 4usize;
+        let v0 = i32::from_le_bytes(data[value_off..value_off + 4].try_into().unwrap());
+        let v1 = i32::from_le_bytes(data[value_off + 4..value_off + 8].try_into().unwrap());
+        assert_eq!(v0, 10, "entity 0 value after init: expected 10, got {v0}");
+        assert_eq!(v1, 20, "entity 1 value after init: expected 20, got {v1}");
+
+        // Run 1 tick: Process adds 5 to each
+        tick.call(&mut store, ()).unwrap();
+
+        let data = memory.data(&store);
+        let v0 = i32::from_le_bytes(data[value_off..value_off + 4].try_into().unwrap());
+        let v1 = i32::from_le_bytes(data[value_off + 4..value_off + 8].try_into().unwrap());
+        assert_eq!(v0, 15, "entity 0 value after tick: expected 15, got {v0}");
+        assert_eq!(v1, 25, "entity 1 value after tick: expected 25, got {v1}");
+    }
+
+    #[test]
+    fn test_boolean_ops() {
+        // Test `and`, `or`, `not` operators in conditions.
+        let source = r#"
+component Flags {
+    a: bool
+    b: bool
+}
+
+component Results {
+    and_result: i32
+    or_result: i32
+    not_result: i32
+}
+
+system Logic {
+    query {
+        read Flags
+        write Results
+    }
+    each(f: Flags, r: Results) {
+        if f.a and f.b {
+            r.and_result = 1
+        } else {
+            r.and_result = 0
+        }
+        if f.a or f.b {
+            r.or_result = 1
+        } else {
+            r.or_result = 0
+        }
+        if not f.a {
+            r.not_result = 1
+        } else {
+            r.not_result = 0
+        }
+    }
+}
+
+world Game {
+    systems {
+        Logic
+    }
+}
+"#;
+        let wasm_bytes = compile_vivi(source);
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm_bytes).unwrap();
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).unwrap();
+
+        let init = instance.get_typed_func::<(), ()>(&mut store, "init").unwrap();
+        let tick = instance.get_typed_func::<(), ()>(&mut store, "tick").unwrap();
+        let memory = instance.get_memory(&mut store, "memory").unwrap();
+
+        init.call(&mut store, ()).unwrap();
+
+        // Layout: Flags(a: bool, b: bool), Results(and_result: i32, or_result: i32, not_result: i32)
+        let flags_a_off = 4usize;
+        let flags_b_off = 4 + (MAX_ENTITIES as usize) * 4;
+        let results_and_off = 4 + (MAX_ENTITIES as usize) * 8;
+        let results_or_off = 4 + (MAX_ENTITIES as usize) * 12;
+        let results_not_off = 4 + (MAX_ENTITIES as usize) * 16;
+
+        // Set up 2 entities:
+        // Entity 0: a=true, b=false  -> and=0, or=1, not=0
+        // Entity 1: a=true, b=true   -> and=1, or=1, not=0
+        let data = memory.data_mut(&mut store);
+        data[0..4].copy_from_slice(&2i32.to_le_bytes());
+
+        data[flags_a_off..flags_a_off + 4].copy_from_slice(&1i32.to_le_bytes());
+        data[flags_b_off..flags_b_off + 4].copy_from_slice(&0i32.to_le_bytes());
+
+        data[flags_a_off + 4..flags_a_off + 8].copy_from_slice(&1i32.to_le_bytes());
+        data[flags_b_off + 4..flags_b_off + 8].copy_from_slice(&1i32.to_le_bytes());
+
+        tick.call(&mut store, ()).unwrap();
+
+        let data = memory.data(&store);
+
+        // Entity 0: a=true, b=false -> and=0, or=1, not_a=0
+        let and0 = i32::from_le_bytes(data[results_and_off..results_and_off + 4].try_into().unwrap());
+        let or0 = i32::from_le_bytes(data[results_or_off..results_or_off + 4].try_into().unwrap());
+        let not0 = i32::from_le_bytes(data[results_not_off..results_not_off + 4].try_into().unwrap());
+        assert_eq!(and0, 0, "entity 0: true and false should be 0, got {and0}");
+        assert_eq!(or0, 1, "entity 0: true or false should be 1, got {or0}");
+        assert_eq!(not0, 0, "entity 0: not true should be 0, got {not0}");
+
+        // Entity 1: a=true, b=true -> and=1, or=1, not_a=0
+        let and1 = i32::from_le_bytes(data[results_and_off + 4..results_and_off + 8].try_into().unwrap());
+        let or1 = i32::from_le_bytes(data[results_or_off + 4..results_or_off + 8].try_into().unwrap());
+        let not1 = i32::from_le_bytes(data[results_not_off + 4..results_not_off + 8].try_into().unwrap());
+        assert_eq!(and1, 1, "entity 1: true and true should be 1, got {and1}");
+        assert_eq!(or1, 1, "entity 1: true or true should be 1, got {or1}");
+        assert_eq!(not1, 0, "entity 1: not true should be 0, got {not1}");
+    }
+
+    #[test]
+    fn test_despawn_rejected_in_bare_system() {
+        // despawn in a bare system should be rejected by sema.
+        let source = r#"
+component Tag {
+    id: i32
+    unused: i32
+}
+
+system BadSystem {
+    despawn
+}
+
+world Game {
+    systems {
+        BadSystem
+    }
+}
+"#;
+        let program = vivi_parser::parse(source).expect("parse failed");
+        let result = vivi_sema::resolve(&program, source);
+        assert!(result.is_err(), "expected sema error for despawn in bare system");
+        let err = result.unwrap_err();
+        assert!(
+            err.message.contains("each block"),
+            "expected error about 'each block', got: {}",
+            err.message
+        );
+    }
 }

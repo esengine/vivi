@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use vivi_parser::ast::*;
 use vivi_sema::layout::MemoryLayout;
 use vivi_sema::resolve::{
-    EachParamInfo, EntityInfo, FieldValue, FnSignature, ResolvedProgram, SystemInfo,
+    EachParamInfo, EntityInfo, FieldValue, ResolvedProgram, SystemInfo,
 };
 use vivi_sema::types::Ty;
 
@@ -56,14 +56,10 @@ pub struct Interpreter {
     world_systems: Vec<String>,
     system_infos: Vec<SystemInfo>,
     system_bodies: HashMap<String, Vec<Stmt>>,
-    #[allow(dead_code)]
-    fn_sigs: HashMap<String, FnSignature>,
     fn_bodies: HashMap<String, Vec<Stmt>>,
     fn_params: HashMap<String, Vec<FnParam>>,
     extern_handlers: HashMap<String, ExternHandler>,
     globals: HashMap<String, (u32, Ty, FieldValue)>, // name -> (offset, type, init)
-    #[allow(dead_code)]
-    component_fields: HashMap<String, Vec<(String, Ty)>>,
 }
 
 impl Interpreter {
@@ -92,34 +88,9 @@ impl Interpreter {
             }
         }
 
-        let mut fn_sigs = HashMap::new();
-        for sig in &resolved.functions {
-            fn_sigs.insert(sig.name.clone(), sig.clone());
-        }
-        for efn in &resolved.extern_fns {
-            fn_sigs.insert(
-                efn.name.clone(),
-                FnSignature {
-                    name: efn.name.clone(),
-                    params: efn.params.clone(),
-                    return_ty: efn.return_ty.clone(),
-                },
-            );
-        }
-
         let mut globals_map = HashMap::new();
         for g in &resolved.globals {
             globals_map.insert(g.name.clone(), (g.offset, g.ty.clone(), g.init_value.clone()));
-        }
-
-        let mut component_fields = HashMap::new();
-        for comp in &resolved.components {
-            let fields: Vec<(String, Ty)> = comp
-                .fields
-                .iter()
-                .map(|f| (f.name.clone(), f.ty.clone()))
-                .collect();
-            component_fields.insert(comp.name.clone(), fields);
         }
 
         Self {
@@ -130,12 +101,10 @@ impl Interpreter {
             world_systems: resolved.world_systems.clone(),
             system_infos: resolved.systems.clone(),
             system_bodies,
-            fn_sigs,
             fn_bodies,
             fn_params,
             extern_handlers: HashMap::new(),
             globals: globals_map,
-            component_fields,
         }
     }
 

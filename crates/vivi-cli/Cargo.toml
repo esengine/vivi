@@ -8,7 +8,6 @@ name = "vivi"
 path = "src/main.rs"
 
 [dependencies]
-vivi-lexer = { path = "../vivi-lexer" }
 vivi-parser = { path = "../vivi-parser" }
 vivi-sema = { path = "../vivi-sema" }
 vivi-codegen = { path = "../vivi-codegen" }

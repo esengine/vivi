@@ -242,44 +242,47 @@ impl<'a> ExprCtx<'a> {
         }
     }
 
-    /// Determine if an expression produces a float value.
-    fn is_float_expr(&self, expr: &Expr) -> bool {
+    /// Simple type inference for codegen (sema already validated types).
+    pub fn infer_expr_ty(&self, expr: &Expr) -> Ty {
         match expr {
-            Expr::FloatLit(_, _) => true,
-            Expr::IntLit(_, _) | Expr::BoolLit(_, _) => false,
+            Expr::FloatLit(_, _) => Ty::F32,
+            Expr::IntLit(_, _) => Ty::I32,
+            Expr::BoolLit(_, _) => Ty::Bool,
             Expr::Ident(name, _) => {
                 if let Some(l) = self.locals.get(name) {
-                    l.ty.is_float()
+                    l.ty.clone()
                 } else if let Some(g) = self.globals.get(name) {
-                    g.ty.is_float()
+                    g.ty.clone()
                 } else {
-                    false
+                    Ty::I32
                 }
             }
             Expr::FieldAccess(obj, field, _) => {
                 if let Expr::Ident(param_name, _) = obj.as_ref() {
                     if let Some(param) = self.params.iter().find(|p| p.name == *param_name) {
                         let comp = self.layout.get_component(&param.component).unwrap();
-                        comp.fields.iter().find(|f| f.name == *field).unwrap().ty.is_float()
-                    } else {
-                        false
+                        return comp.fields.iter().find(|f| f.name == *field).unwrap().ty.clone();
                     }
-                } else {
-                    false
                 }
-            }
-            Expr::Call(name, _, _) => {
-                if name == "mem_load_f32" { return true; }
-                if name == "mem_load_i32" || name.starts_with("mem_store") { return false; }
-                self.fn_return_types.get(name).map_or(false, |ty| ty.is_float())
+                Ty::I32
             }
             Expr::BinOp(left, op, _, _) => match op {
-                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => self.is_float_expr(left),
-                _ => false,
+                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => self.infer_expr_ty(left),
+                _ => Ty::Bool,
             },
-            Expr::UnaryOp(UnaryOp::Neg, inner, _) => self.is_float_expr(inner),
-            Expr::UnaryOp(UnaryOp::Not, _, _) => false,
+            Expr::Call(name, _, _) => {
+                if name == "mem_load_f32" { return Ty::F32; }
+                if name == "mem_load_i32" || name.starts_with("mem_store") { return Ty::I32; }
+                self.fn_return_types.get(name).cloned().unwrap_or(Ty::I32)
+            }
+            Expr::UnaryOp(UnaryOp::Neg, inner, _) => self.infer_expr_ty(inner),
+            Expr::UnaryOp(UnaryOp::Not, _, _) => Ty::Bool,
         }
+    }
+
+    /// Determine if an expression produces a float value.
+    fn is_float_expr(&self, expr: &Expr) -> bool {
+        self.infer_expr_ty(expr).is_float()
     }
 }
 
