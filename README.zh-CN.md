@@ -81,10 +81,12 @@ world Game {
 - **模块系统** — `use std.math` 和 `use std.render` 导入标准库函数
 - **全局变量** — `global name: type = value` 跨 tick 持久化状态
 - **内存内置函数** — `mem_store_i32/f32` 和 `mem_load_i32/f32` 直接访问内存
+- **`__heap_base` 编译器常量** — 标记 SoA 组件数据末尾，用户分配的安全起始地址
 - **Chrome DevTools 调试** — Source Map 支持让你在浏览器 Sources 面板中单步调试 `.vivi` 文件
 - **WASM 名称段** — 调试器中显示真实函数名，而非数字索引
 - **Struct-of-Arrays 内存布局** — 组件以 SoA 方式存储在 WASM 线性内存中，缓存友好
 - **比优化 JS 快 4.6 倍** — 纯计算基准测试（galaxy-bench）
+- **80 万实体 3D 仿真** — universe 示例以实时帧率渲染 80 万颗带透视投影的星体
 - **编译极快** — 完整编译流水线约 15 微秒完成
 - **极简语法** — 无分号，换行分隔，逻辑运算用 `and`/`or`/`not`
 
@@ -147,7 +149,7 @@ vivi build examples/galaxy.vivi --target web -o dist/
 
 ### 语句
 
-`let`、`if`/`else`、`while`、`return`、`spawn`、`despawn`、赋值（`=`）
+`let`、`if`/`else`、`while`、`return`、`spawn`、`despawn`、`global`、赋值（`=`）
 
 ### 表达式
 
@@ -171,7 +173,7 @@ let x: i32 = mem_load_i32(addr)
 let y: f32 = mem_load_f32(addr)
 ```
 
-直接读写 WASM 线性内存。`std.render` 使用此功能实现缓冲渲染。
+直接读写 WASM 线性内存。`std.render` 使用此功能实现缓冲渲染。编译器常量 `__heap_base` 提供 SoA 组件数据之后的第一个安全地址。
 
 ### 模块系统
 
@@ -236,6 +238,7 @@ use std.render   // set_color, draw_rect, clear_screen
 | `examples/galaxy-bench.vivi` | 纯计算基准测试（比 JS 快 4.6 倍） |
 | `examples/buffered-render.vivi` | 使用 `global` 和 `mem_store/load` 的缓冲渲染 |
 | `examples/use-demo.vivi` | 现代惯用风格，使用 `use std.math` 和 `use std.render` |
+| `examples/universe.vivi` | 80 万颗星体 — 3D 透视投影，直接 SoA 渲染 |
 
 ## 性能基准
 
@@ -248,7 +251,7 @@ use std.render   // set_color, draw_rect, clear_screen
 | 5,000 | 3.89 us | 0.78 ns |
 | 10,000 | 7.91 us | 0.79 ns |
 
-Galaxy 基准测试（5,000 颗星体，重力 + 运动）：比等效优化 JavaScript **快 4.6 倍**。
+Galaxy 基准测试（5,000 颗星体，重力 + 运动）：比等效优化 JavaScript **快 4.6 倍**。Universe 示例可扩展至 80 万颗星体，在浏览器中以实时帧率进行 3D 透视投影渲染。
 
 ## 测试
 
@@ -268,8 +271,8 @@ cargo bench -p vivi-integration-tests
 - [x] Phase 1 — 核心编译器流水线（component、system、query、world、算术运算）
 - [x] Phase 2 — `fn`、`extern`、`entity`、`spawn`、裸系统、`world init`
 - [x] Phase 3 — 解释器、`--target web`、Source Map、标准宿主 API
-- [x] Phase 4 — `despawn`、`global` 全局变量、`mem_store/load` 内存内置函数、`use` 模块系统、类型系统加固、`std.math` + `std.render`
-- [ ] Phase 5 — WebGL 渲染后端、基于分块的无限世界
+- [x] Phase 4 — `despawn`、`global` 全局变量、`mem_store/load` 内存内置函数、`use` 模块系统、类型系统加固、`std.math` + `std.render`、WebGL 渲染、`__heap_base`、标准库整理
+- [ ] Phase 5 — 基于分块的无限世界、WASI 支持、包管理器
 
 ## 许可证
 

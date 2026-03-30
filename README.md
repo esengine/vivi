@@ -81,10 +81,12 @@ world Game {
 - **Module system** — `use std.math` and `use std.render` import standard library functions
 - **Global variables** — `global name: type = value` persists state across ticks
 - **Memory intrinsics** — `mem_store_i32/f32` and `mem_load_i32/f32` for direct memory access
+- **`__heap_base` compiler constant** — marks the end of SoA component data, safe start address for user allocations
 - **Chrome DevTools debugging** — source maps let you step through `.vivi` files in the browser Sources panel
 - **WASM name section** — real function names appear in the debugger, not numeric indices
 - **Struct-of-Arrays memory layout** — components stored as SoA in WASM linear memory for cache-friendly iteration
 - **4.6x faster than optimized JS** — in pure computation benchmarks (galaxy-bench)
+- **800K entity 3D simulation** — universe demo renders 800,000 stars with perspective projection at real-time frame rates
 - **Fast compilation** — full pipeline completes in ~15 microseconds
 - **Minimal syntax** — no semicolons, newline-separated, `and`/`or`/`not` for logic
 
@@ -147,7 +149,7 @@ The generated runtime handles WASM loading, the game loop, and all standard host
 
 ### Statements
 
-`let`, `if`/`else`, `while`, `return`, `spawn`, `despawn`, assignment (`=`)
+`let`, `if`/`else`, `while`, `return`, `spawn`, `despawn`, `global`, assignment (`=`)
 
 ### Expressions
 
@@ -171,7 +173,7 @@ let x: i32 = mem_load_i32(addr)
 let y: f32 = mem_load_f32(addr)
 ```
 
-Direct read/write access to WASM linear memory. Used by `std.render` to implement buffered rendering.
+Direct read/write access to WASM linear memory. Used by `std.render` to implement buffered rendering. The compiler constant `__heap_base` provides the first safe address after all SoA component data.
 
 ### Module System
 
@@ -236,6 +238,7 @@ Offset 120004:  Velocity_dy[MAX_ENTITIES]  (f32[])
 | `examples/galaxy-bench.vivi` | Pure computation benchmark (4.6x faster than JS) |
 | `examples/buffered-render.vivi` | Buffered rendering using `global` and `mem_store/load` |
 | `examples/use-demo.vivi` | Modern idiomatic style using `use std.math` and `use std.render` |
+| `examples/universe.vivi` | 800,000 stars — 3D perspective projection, direct SoA rendering |
 
 ## Benchmarks
 
@@ -248,7 +251,7 @@ Measured with [criterion](https://github.com/bheisler/criterion.rs) via wasmtime
 | 5,000 | 3.89 us | 0.78 ns |
 | 10,000 | 7.91 us | 0.79 ns |
 
-Galaxy benchmark (5,000 stars, gravity + movement): **4.6x faster** than equivalent optimized JavaScript.
+Galaxy benchmark (5,000 stars, gravity + movement): **4.6x faster** than equivalent optimized JavaScript. The universe demo scales to 800K stars with 3D perspective projection running at real-time frame rates in the browser.
 
 ## Testing
 
@@ -268,8 +271,8 @@ cargo bench -p vivi-integration-tests
 - [x] Phase 1 — Core compiler pipeline (component, system, query, world, arithmetic)
 - [x] Phase 2 — `fn`, `extern`, `entity`, `spawn`, bare systems, `world init`
 - [x] Phase 3 — Interpreter, `--target web`, source maps, standard host API
-- [x] Phase 4 — `despawn`, `global` variables, `mem_store/load` intrinsics, `use` module system, type system hardening, `std.math` + `std.render`
-- [ ] Phase 5 — WebGL rendering backend, chunk-based infinite worlds
+- [x] Phase 4 — `despawn`, `global` variables, `mem_store/load` intrinsics, `use` module system, type system hardening, `std.math` + `std.render`, WebGL rendering, `__heap_base`, std library cleanup
+- [ ] Phase 5 — Chunk-based infinite worlds, WASI support, package manager
 
 ## License
 
