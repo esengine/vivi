@@ -78,6 +78,7 @@ pub enum FieldValue {
     F32(f32),
     I32(i32),
     Bool(bool),
+    Array(Vec<FieldValue>),
 }
 
 #[derive(Debug, Clone)]
@@ -166,6 +167,55 @@ pub fn resolve_with_max(program: &Program, source: &str, max_entities: u32) -> R
                             source_code: source.to_string(),
                         }),
                     }
+                }
+                vivi_parser::ast::Expr::ArrayLit(elements, _) => {
+                    let _elem_ty = match &ty {
+                        Ty::Array(elem, _) => elem.as_ref().clone(),
+                        _ => return Err(SemaError {
+                            message: "array literal used for non-array type".into(),
+                            span: g.span.clone(),
+                            label: "type mismatch".into(),
+                            source_code: source.to_string(),
+                        }),
+                    };
+                    let mut vals = Vec::new();
+                    for elem_expr in elements {
+                        let v = match elem_expr {
+                            vivi_parser::ast::Expr::IntLit(v, _) => FieldValue::I32(*v as i32),
+                            vivi_parser::ast::Expr::FloatLit(v, _) => FieldValue::F32(*v as f32),
+                            vivi_parser::ast::Expr::BoolLit(v, _) => FieldValue::Bool(*v),
+                            vivi_parser::ast::Expr::UnaryOp(vivi_parser::ast::UnaryOp::Neg, inner, _) => {
+                                match inner.as_ref() {
+                                    vivi_parser::ast::Expr::IntLit(v, _) => FieldValue::I32(-(*v as i32)),
+                                    vivi_parser::ast::Expr::FloatLit(v, _) => FieldValue::F32(-(*v as f32)),
+                                    _ => return Err(SemaError {
+                                        message: "array element must be a literal".into(),
+                                        span: g.span.clone(),
+                                        label: "expected literal".into(),
+                                        source_code: source.to_string(),
+                                    }),
+                                }
+                            }
+                            _ => return Err(SemaError {
+                                message: "array element must be a literal".into(),
+                                span: g.span.clone(),
+                                label: "expected literal".into(),
+                                source_code: source.to_string(),
+                            }),
+                        };
+                        vals.push(v);
+                    }
+                    if let Ty::Array(_, expected_len) = &ty {
+                        if vals.len() != *expected_len as usize {
+                            return Err(SemaError {
+                                message: format!("expected {} elements, got {}", expected_len, vals.len()),
+                                span: g.span.clone(),
+                                label: "wrong number of elements".into(),
+                                source_code: source.to_string(),
+                            });
+                        }
+                    }
+                    FieldValue::Array(vals)
                 }
                 _ => return Err(SemaError {
                     message: "global initial value must be a literal".into(),
@@ -852,6 +902,50 @@ fn infer_type(expr: &Expr, ctx: &TypeCtx) -> Result<Ty, SemaError> {
                 UnaryOp::Neg => Ok(ty),
                 UnaryOp::Not => Ok(Ty::Bool),
             }
+        }
+        Expr::Index(arr_expr, index_expr, span) => {
+            let arr_ty = infer_type(arr_expr, ctx)?;
+            let idx_ty = infer_type(index_expr, ctx)?;
+            if !idx_ty.is_integer() {
+                return Err(SemaError {
+                    message: format!("array index must be integer, got `{idx_ty}`"),
+                    span: span.clone(),
+                    label: "expected integer".into(),
+                    source_code: ctx.source.to_string(),
+                });
+            }
+            match arr_ty {
+                Ty::Array(elem, _) => Ok(*elem),
+                _ => Err(SemaError {
+                    message: format!("cannot index into non-array type `{arr_ty}`"),
+                    span: span.clone(),
+                    label: "not an array".into(),
+                    source_code: ctx.source.to_string(),
+                }),
+            }
+        }
+        Expr::ArrayLit(elements, span) => {
+            if elements.is_empty() {
+                return Err(SemaError {
+                    message: "empty array literal".into(),
+                    span: span.clone(),
+                    label: "here".into(),
+                    source_code: ctx.source.to_string(),
+                });
+            }
+            let first_ty = infer_type(&elements[0], ctx)?;
+            for elem in &elements[1..] {
+                let elem_ty = infer_type(elem, ctx)?;
+                if elem_ty != first_ty {
+                    return Err(SemaError {
+                        message: format!("array element type mismatch: expected `{first_ty}`, got `{elem_ty}`"),
+                        span: elem.span().clone(),
+                        label: format!("expected `{first_ty}`"),
+                        source_code: ctx.source.to_string(),
+                    });
+                }
+            }
+            Ok(Ty::Array(Box::new(first_ty), elements.len() as u32))
         }
     }
 }

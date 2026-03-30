@@ -55,6 +55,7 @@ pub enum TypeName {
     F64,
     Bool,
     Entity,
+    Array(Box<TypeName>, u32), // [T; N]
 }
 
 impl TypeName {
@@ -66,6 +67,7 @@ impl TypeName {
             TypeName::F64 => 8,
             TypeName::Bool => 4, // stored as i32 in wasm
             TypeName::Entity => 4,
+            TypeName::Array(elem, count) => elem.byte_size() * count,
         }
     }
 }
@@ -188,6 +190,8 @@ pub enum Expr {
     Call(String, Vec<Expr>, Span),
     BinOp(Box<Expr>, BinOp, Box<Expr>, Span),
     UnaryOp(UnaryOp, Box<Expr>, Span),
+    Index(Box<Expr>, Box<Expr>, Span),    // arr[i]
+    ArrayLit(Vec<Expr>, Span),             // [1, 2, 3]
 }
 
 impl Expr {
@@ -201,6 +205,8 @@ impl Expr {
             Expr::Call(_, _, s) => s,
             Expr::BinOp(_, _, _, s) => s,
             Expr::UnaryOp(_, _, s) => s,
+            Expr::Index(_, _, s) => s,
+            Expr::ArrayLit(_, s) => s,
         }
     }
 }

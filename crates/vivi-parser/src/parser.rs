@@ -505,12 +505,23 @@ impl Parser {
 
     fn parse_postfix(&mut self) -> Result<Expr, ParseError> {
         let mut expr = self.parse_primary()?;
-        while self.check(&Token::Dot) {
-            self.advance();
-            let field = self.expect_ident()?;
-            let end = self.previous_span().end;
-            let span = expr.span().start..end;
-            expr = Expr::FieldAccess(Box::new(expr), field, span);
+        loop {
+            if self.check(&Token::Dot) {
+                self.advance();
+                let field = self.expect_ident()?;
+                let end = self.previous_span().end;
+                let span = expr.span().start..end;
+                expr = Expr::FieldAccess(Box::new(expr), field, span);
+            } else if self.check(&Token::LBracket) {
+                self.advance();
+                let index = self.parse_expr()?;
+                self.expect(Token::RBracket)?;
+                let end = self.previous_span().end;
+                let span = expr.span().start..end;
+                expr = Expr::Index(Box::new(expr), Box::new(index), span);
+            } else {
+                break;
+            }
         }
         Ok(expr)
     }
@@ -592,6 +603,20 @@ impl Parser {
                 self.expect(Token::RParen)?;
                 Ok(expr)
             }
+            Some(Token::LBracket) => {
+                let start = self.current_span().start;
+                self.advance();
+                let mut elements = Vec::new();
+                while !self.check(&Token::RBracket) {
+                    elements.push(self.parse_expr()?);
+                    if self.check(&Token::Comma) {
+                        self.advance();
+                    }
+                }
+                self.expect(Token::RBracket)?;
+                let end = self.previous_span().end;
+                Ok(Expr::ArrayLit(elements, start..end))
+            }
             Some(other) => Err(self.error(format!("expected expression, found `{other}`"))),
             None => Err(self.error_eof("expected expression")),
         }
@@ -599,6 +624,23 @@ impl Parser {
 
     fn parse_type(&mut self) -> Result<TypeName, ParseError> {
         match self.peek_token() {
+            Some(Token::LBracket) => {
+                self.advance();
+                let elem_ty = self.parse_type()?;
+                self.expect(Token::Semicolon)?;
+                let count = match self.peek_token() {
+                    Some(Token::IntLit(_)) => {
+                        if let Token::IntLit(n) = self.advance().token {
+                            n as u32
+                        } else {
+                            unreachable!()
+                        }
+                    }
+                    _ => return Err(self.error("expected array length".into())),
+                };
+                self.expect(Token::RBracket)?;
+                Ok(TypeName::Array(Box::new(elem_ty), count))
+            }
             Some(Token::I32) => {
                 self.advance();
                 Ok(TypeName::I32)

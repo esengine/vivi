@@ -1251,4 +1251,56 @@ world Main {
         let result = i32::from_le_bytes(data[rem_offset..rem_offset + 4].try_into().unwrap());
         assert_eq!(result, 2);
     }
+
+    #[test]
+    fn test_global_array() {
+        let source = r#"
+component Result {
+    sum: i32
+    third: i32
+}
+
+global values: [i32; 4] = [10, 20, 30, 40]
+
+entity E1 {
+    Result { sum: 0, third: 0 }
+}
+
+system Compute {
+    query { write Result }
+    each(r: Result) {
+        r.sum = values[0] + values[1] + values[2] + values[3]
+        r.third = values[2]
+        values[0] = 99
+    }
+}
+
+world Main {
+    systems { Compute }
+}
+"#;
+        let wasm = compile_vivi(source);
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm).unwrap();
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).unwrap();
+
+        let init = instance.get_typed_func::<(), ()>(&mut store, "init").unwrap();
+        let tick = instance.get_typed_func::<(), ()>(&mut store, "tick").unwrap();
+        init.call(&mut store, ()).unwrap();
+        tick.call(&mut store, ()).unwrap();
+
+        let mem = instance.get_memory(&mut store, "memory").unwrap();
+        let data = mem.data(&store);
+
+        // Result.sum = 10 + 20 + 30 + 40 = 100
+        let sum_offset = 4; // first field of first (only) component
+        let sum = i32::from_le_bytes(data[sum_offset..sum_offset + 4].try_into().unwrap());
+        assert_eq!(sum, 100);
+
+        // Result.third = values[2] = 30
+        let third_offset = 4 + MAX_ENTITIES as usize * 4;
+        let third = i32::from_le_bytes(data[third_offset..third_offset + 4].try_into().unwrap());
+        assert_eq!(third, 30);
+    }
 }

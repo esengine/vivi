@@ -18,6 +18,7 @@ fn ty_to_valtype(ty: &Ty) -> ValType {
         Ty::F64 => ValType::F64,
         Ty::I64 => ValType::I64,
         Ty::I32 | Ty::Bool | Ty::Entity => ValType::I32,
+        Ty::Array(_, _) => panic!("arrays cannot be used as WASM value types"),
     }
 }
 
@@ -323,25 +324,61 @@ fn compile_init(
 
     // Initialize globals
     for g in globals {
-        func.instruction(&Instruction::I32Const(g.offset as i32));
         match &g.init_value {
-            FieldValue::F32(v) => {
-                func.instruction(&Instruction::F32Const(*v));
-                func.instruction(&Instruction::F32Store(wasm_encoder::MemArg {
-                    offset: 0, align: 2, memory_index: 0,
-                }));
+            FieldValue::Array(elements) => {
+                let elem_size = match &g.ty {
+                    Ty::Array(elem, _) => elem.byte_size(),
+                    _ => 4,
+                };
+                for (i, elem) in elements.iter().enumerate() {
+                    let elem_offset = g.offset + i as u32 * elem_size;
+                    func.instruction(&Instruction::I32Const(elem_offset as i32));
+                    match elem {
+                        FieldValue::F32(v) => {
+                            func.instruction(&Instruction::F32Const(*v));
+                            func.instruction(&Instruction::F32Store(wasm_encoder::MemArg {
+                                offset: 0, align: 2, memory_index: 0,
+                            }));
+                        }
+                        FieldValue::I32(v) => {
+                            func.instruction(&Instruction::I32Const(*v));
+                            func.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
+                                offset: 0, align: 2, memory_index: 0,
+                            }));
+                        }
+                        FieldValue::Bool(v) => {
+                            func.instruction(&Instruction::I32Const(if *v { 1 } else { 0 }));
+                            func.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
+                                offset: 0, align: 2, memory_index: 0,
+                            }));
+                        }
+                        FieldValue::Array(_) => {} // nested arrays not supported
+                    }
+                }
             }
-            FieldValue::I32(v) => {
-                func.instruction(&Instruction::I32Const(*v));
-                func.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
-                    offset: 0, align: 2, memory_index: 0,
-                }));
-            }
-            FieldValue::Bool(v) => {
-                func.instruction(&Instruction::I32Const(if *v { 1 } else { 0 }));
-                func.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
-                    offset: 0, align: 2, memory_index: 0,
-                }));
+            _ => {
+                func.instruction(&Instruction::I32Const(g.offset as i32));
+                match &g.init_value {
+                    FieldValue::F32(v) => {
+                        func.instruction(&Instruction::F32Const(*v));
+                        func.instruction(&Instruction::F32Store(wasm_encoder::MemArg {
+                            offset: 0, align: 2, memory_index: 0,
+                        }));
+                    }
+                    FieldValue::I32(v) => {
+                        func.instruction(&Instruction::I32Const(*v));
+                        func.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
+                            offset: 0, align: 2, memory_index: 0,
+                        }));
+                    }
+                    FieldValue::Bool(v) => {
+                        func.instruction(&Instruction::I32Const(if *v { 1 } else { 0 }));
+                        func.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
+                            offset: 0, align: 2, memory_index: 0,
+                        }));
+                    }
+                    FieldValue::Array(_) => unreachable!(),
+                }
             }
         }
     }
@@ -373,6 +410,7 @@ fn compile_init(
                             offset: 0, align: 2, memory_index: 0,
                         }));
                     }
+                    FieldValue::Array(_) => {} // entity fields don't use arrays
                 }
             }
         }

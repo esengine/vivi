@@ -135,6 +135,7 @@ impl Interpreter {
                             let val: i32 = if *v { 1 } else { 0 };
                             self.memory[addr..addr + 4].copy_from_slice(&val.to_le_bytes());
                         }
+                        FieldValue::Array(_) => {} // entity fields don't use arrays
                     }
                 }
             }
@@ -150,6 +151,24 @@ impl Interpreter {
                 FieldValue::Bool(v) => {
                     let val: i32 = if *v { 1 } else { 0 };
                     self.memory[addr..addr+4].copy_from_slice(&val.to_le_bytes());
+                }
+                FieldValue::Array(elements) => {
+                    let elem_size = match _ty {
+                        Ty::Array(elem, _) => elem.byte_size(),
+                        _ => 4,
+                    };
+                    for (i, elem) in elements.iter().enumerate() {
+                        let elem_addr = addr + i * elem_size as usize;
+                        match elem {
+                            FieldValue::F32(v) => self.memory[elem_addr..elem_addr+4].copy_from_slice(&v.to_le_bytes()),
+                            FieldValue::I32(v) => self.memory[elem_addr..elem_addr+4].copy_from_slice(&v.to_le_bytes()),
+                            FieldValue::Bool(v) => {
+                                let val: i32 = if *v { 1 } else { 0 };
+                                self.memory[elem_addr..elem_addr+4].copy_from_slice(&val.to_le_bytes());
+                            }
+                            FieldValue::Array(_) => {} // nested arrays not supported
+                        }
+                    }
                 }
             }
         }
@@ -236,6 +255,26 @@ impl Interpreter {
                     Expr::FieldAccess(obj, field, _) => {
                         if let Expr::Ident(param_name, _) = obj.as_ref() {
                             self.write_field(param_name, field, each_params.unwrap(), entity_idx, &value);
+                        }
+                    }
+                    Expr::Index(arr_expr, index_expr, _) => {
+                        let idx = self.eval_expr(index_expr, locals, each_params, entity_idx).as_i32();
+                        if let Expr::Ident(name, _) = arr_expr.as_ref() {
+                            if let Some((offset, ty, _)) = self.globals.get(name).cloned() {
+                                if let Ty::Array(elem_ty, _) = &ty {
+                                    let elem_size = elem_ty.byte_size();
+                                    let addr = (offset + idx as u32 * elem_size) as usize;
+                                    match &value {
+                                        Value::F32(v) => self.memory[addr..addr+4].copy_from_slice(&v.to_le_bytes()),
+                                        Value::I32(v) => self.memory[addr..addr+4].copy_from_slice(&v.to_le_bytes()),
+                                        Value::Bool(v) => {
+                                            let val: i32 = if *v { 1 } else { 0 };
+                                            self.memory[addr..addr+4].copy_from_slice(&val.to_le_bytes());
+                                        }
+                                        Value::F64(v) => self.memory[addr..addr+8].copy_from_slice(&v.to_le_bytes()),
+                                    }
+                                }
+                            }
                         }
                     }
                     Expr::Ident(name, _) => {
@@ -344,6 +383,7 @@ impl Interpreter {
                         Ty::I32 | Ty::Bool | Ty::Entity => Value::I32(i32::from_le_bytes(self.memory[addr..addr+4].try_into().unwrap())),
                         Ty::F64 => Value::F64(f64::from_le_bytes(self.memory[addr..addr+8].try_into().unwrap())),
                         Ty::I64 => Value::I32(i64::from_le_bytes(self.memory[addr..addr+8].try_into().unwrap()) as i32),
+                        Ty::Array(_, _) => panic!("cannot load array global as scalar value"),
                     }
                 } else {
                     Value::I32(entity_idx as i32)
@@ -427,6 +467,32 @@ impl Interpreter {
                     },
                     UnaryOp::Not => Value::Bool(!v.is_truthy()),
                 }
+            }
+            Expr::Index(arr_expr, index_expr, _) => {
+                let idx = self.eval_expr(index_expr, locals, each_params, entity_idx).as_i32();
+                if let Expr::Ident(name, _) = arr_expr.as_ref() {
+                    if let Some((offset, ty, _)) = self.globals.get(name) {
+                        if let Ty::Array(elem_ty, _) = ty {
+                            let elem_size = elem_ty.byte_size();
+                            let addr = (*offset + idx as u32 * elem_size) as usize;
+                            match elem_ty.as_ref() {
+                                Ty::F32 => Value::F32(f32::from_le_bytes(self.memory[addr..addr+4].try_into().unwrap())),
+                                Ty::I32 | Ty::Bool | Ty::Entity => Value::I32(i32::from_le_bytes(self.memory[addr..addr+4].try_into().unwrap())),
+                                Ty::F64 => Value::F64(f64::from_le_bytes(self.memory[addr..addr+8].try_into().unwrap())),
+                                _ => panic!("unsupported array element type"),
+                            }
+                        } else {
+                            panic!("index on non-array global");
+                        }
+                    } else {
+                        panic!("index on non-global");
+                    }
+                } else {
+                    panic!("index on non-ident");
+                }
+            }
+            Expr::ArrayLit(_, _) => {
+                panic!("array literal in expression context");
             }
         }
     }
@@ -598,6 +664,7 @@ impl Interpreter {
                 let bytes: [u8; 8] = self.memory[addr..addr + 8].try_into().unwrap();
                 Value::I32(i64::from_le_bytes(bytes) as i32)
             }
+            Ty::Array(_, _) => panic!("component fields cannot be arrays"),
         }
     }
 
@@ -661,6 +728,7 @@ impl Interpreter {
                             );
                             format!("{v}")
                         }
+                        Ty::Array(_, _) => "array".to_string(),
                     };
                     out.push_str(&format!(" {}={val_str}", fl.name));
                 }

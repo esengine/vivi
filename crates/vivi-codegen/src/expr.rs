@@ -151,6 +151,33 @@ impl<'a> ExprCtx<'a> {
                     instrs.push(Instruction::I32Eqz);
                 }
             },
+            Expr::Index(arr_expr, index_expr, _) => {
+                // arr[i] -> load from memory at global_offset + i * element_size
+                if let Expr::Ident(name, _) = arr_expr.as_ref() {
+                    if let Some(gvar) = self.globals.get(name) {
+                        if let Ty::Array(elem_ty, _) = &gvar.ty {
+                            let elem_size = elem_ty.byte_size();
+                            // address = global_offset + index * element_size
+                            instrs.push(Instruction::I32Const(gvar.offset as i32));
+                            self.compile_expr(index_expr, instrs);
+                            instrs.push(Instruction::I32Const(elem_size as i32));
+                            instrs.push(Instruction::I32Mul);
+                            instrs.push(Instruction::I32Add);
+                            instrs.push(self.load_instr(elem_ty));
+                        } else {
+                            panic!("index on non-array global `{name}`");
+                        }
+                    } else {
+                        panic!("index on non-global `{name}`");
+                    }
+                } else {
+                    panic!("index on non-identifier not supported");
+                }
+            }
+            Expr::ArrayLit(_, _) => {
+                // Array literals should only appear in global init context, not in expressions
+                panic!("array literal in expression context not supported");
+            }
         }
     }
 
@@ -208,6 +235,7 @@ impl<'a> ExprCtx<'a> {
             Ty::F64 => Instruction::F64Load(mem),
             Ty::I32 | Ty::Bool | Ty::Entity => Instruction::I32Load(mem),
             Ty::I64 => Instruction::I64Load(mem),
+            Ty::Array(_, _) => panic!("cannot load array type directly"),
         }
     }
 
@@ -218,6 +246,7 @@ impl<'a> ExprCtx<'a> {
             Ty::F64 => Instruction::F64Store(mem),
             Ty::I32 | Ty::Bool | Ty::Entity => Instruction::I32Store(mem),
             Ty::I64 => Instruction::I64Store(mem),
+            Ty::Array(_, _) => panic!("cannot store array type directly"),
         }
     }
 
@@ -307,6 +336,21 @@ impl<'a> ExprCtx<'a> {
             }
             Expr::UnaryOp(UnaryOp::Neg, inner, _) => self.infer_expr_ty(inner),
             Expr::UnaryOp(UnaryOp::Not, _, _) => Ty::Bool,
+            Expr::Index(arr_expr, _, _) => {
+                let arr_ty = self.infer_expr_ty(arr_expr);
+                match arr_ty {
+                    Ty::Array(elem, _) => *elem,
+                    _ => Ty::I32,
+                }
+            }
+            Expr::ArrayLit(elements, _) => {
+                if elements.is_empty() {
+                    Ty::I32
+                } else {
+                    let elem_ty = self.infer_expr_ty(&elements[0]);
+                    Ty::Array(Box::new(elem_ty), elements.len() as u32)
+                }
+            }
         }
     }
 

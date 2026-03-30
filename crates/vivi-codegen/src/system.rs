@@ -128,6 +128,24 @@ fn compile_stmt(stmt: &Stmt, ctx: &mut ExprCtx, instrs: &mut Vec<Instruction<'st
         Stmt::Assign(assign) => {
             if let Expr::FieldAccess(obj, field, _) = &assign.target {
                 ctx.compile_field_store(obj, field, &assign.value, instrs);
+            } else if let Expr::Index(arr_expr, index_expr, _) = &assign.target {
+                // arr[i] = value -> store to memory
+                if let Expr::Ident(name, _) = arr_expr.as_ref() {
+                    if let Some(gvar) = ctx.globals.get(name) {
+                        if let Ty::Array(elem_ty, _) = &gvar.ty {
+                            let elem_size = elem_ty.byte_size();
+                            let elem_ty = elem_ty.clone();
+                            // address = global_offset + index * element_size
+                            instrs.push(Instruction::I32Const(gvar.offset as i32));
+                            ctx.compile_expr(index_expr, instrs);
+                            instrs.push(Instruction::I32Const(elem_size as i32));
+                            instrs.push(Instruction::I32Mul);
+                            instrs.push(Instruction::I32Add);
+                            ctx.compile_expr(&assign.value, instrs);
+                            instrs.push(ctx.store_instr(&elem_ty));
+                        }
+                    }
+                }
             } else if let Expr::Ident(name, _) = &assign.target {
                 if let Some(local) = ctx.locals.get(name) {
                     let index = local.index;
@@ -283,6 +301,7 @@ fn compile_spawn(
                 Ty::I32 | Ty::Bool | Ty::Entity => instrs.push(Instruction::I32Store(mem)),
                 Ty::F64 => instrs.push(Instruction::F64Store(wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 })),
                 Ty::I64 => instrs.push(Instruction::I64Store(wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 })),
+                Ty::Array(_, _) => {} // component fields are never arrays
             }
         }
     }
@@ -345,6 +364,7 @@ fn compile_despawn(
                     instrs.push(Instruction::I64Load(mem8));
                     instrs.push(Instruction::I64Store(mem8));
                 }
+                Ty::Array(_, _) => {} // component fields are never arrays
             }
         }
     }

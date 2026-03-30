@@ -8,6 +8,7 @@ pub enum Ty {
     F64,
     Bool,
     Entity,
+    Array(Box<Ty>, u32), // [T; N]
 }
 
 impl Ty {
@@ -19,6 +20,7 @@ impl Ty {
             TypeName::F64 => Ty::F64,
             TypeName::Bool => Ty::Bool,
             TypeName::Entity => Ty::Entity,
+            TypeName::Array(elem, count) => Ty::Array(Box::new(Ty::from_ast(elem)), *count),
         }
     }
 
@@ -26,6 +28,7 @@ impl Ty {
         match self {
             Ty::I32 | Ty::F32 | Ty::Bool | Ty::Entity => 4,
             Ty::I64 | Ty::F64 => 8,
+            Ty::Array(elem, count) => elem.byte_size() * count,
         }
     }
 
@@ -51,6 +54,7 @@ impl std::fmt::Display for Ty {
             Ty::F64 => write!(f, "f64"),
             Ty::Bool => write!(f, "bool"),
             Ty::Entity => write!(f, "Entity"),
+            Ty::Array(elem, count) => write!(f, "[{elem}; {count}]"),
         }
     }
 }

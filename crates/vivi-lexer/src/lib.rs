@@ -116,6 +116,12 @@ pub enum Token {
     Slash,
     #[token("%")]
     Percent,
+    #[token("[")]
+    LBracket,
+    #[token("]")]
+    RBracket,
+    #[token(";")]
+    Semicolon,
     #[token("->")]
     Arrow,
 
@@ -191,6 +197,9 @@ impl std::fmt::Display for Token {
             Token::Star => write!(f, "*"),
             Token::Slash => write!(f, "/"),
             Token::Percent => write!(f, "%"),
+            Token::LBracket => write!(f, "["),
+            Token::RBracket => write!(f, "]"),
+            Token::Semicolon => write!(f, ";"),
             Token::Arrow => write!(f, "->"),
             Token::FloatLit(v) => write!(f, "{v}"),
             Token::IntLit(v) => write!(f, "{v}"),
