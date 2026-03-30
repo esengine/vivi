@@ -20,9 +20,10 @@ fn abs_f32(x: f32) -> f32 {
 }
 
 fn wrap(value: f32, max: f32) -> f32 {
-    if value > max { return value - max }
-    if value < 0.0 { return value + max }
-    return value
+    let v: f32 = value
+    while v > max { v = v - max }
+    while v < 0.0 { v = v + max }
+    return v
 }
 
 fn lerp(a: f32, b: f32, t: f32) -> f32 {

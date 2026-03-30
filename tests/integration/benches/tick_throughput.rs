@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use vivi_sema::layout::MAX_ENTITIES;
+use vivi_sema::layout::DEFAULT_MAX_ENTITIES as MAX_ENTITIES;
 use wasmtime::*;
 
 const SOURCE: &str = r#"

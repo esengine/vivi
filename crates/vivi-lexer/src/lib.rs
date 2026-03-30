@@ -2,7 +2,7 @@ use logos::Logos;
 use std::ops::Range;
 
 #[derive(Logos, Debug, Clone, PartialEq)]
-#[logos(skip r"[ \t]+")]
+#[logos(skip r"[ \t\r]+")]
 #[logos(skip r"//[^\n]*")]
 pub enum Token {
     // Keywords

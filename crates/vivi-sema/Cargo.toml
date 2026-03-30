@@ -5,6 +5,5 @@ edition = "2021"
 
 [dependencies]
 vivi-parser = { path = "../vivi-parser" }
-vivi-lexer = { path = "../vivi-lexer" }
 miette = { workspace = true }
 thiserror = { workspace = true }

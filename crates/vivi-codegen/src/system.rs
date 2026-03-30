@@ -264,7 +264,11 @@ fn compile_spawn(
     instrs: &mut Vec<Instruction<'static>>,
 ) {
     // Allocate a local for the new entity index if not already done
-    let spawn_idx_local = ctx.alloc_local("__spawn_idx".to_string(), Ty::I32);
+    let spawn_idx_local = if ctx.locals.contains_key("__spawn_idx") {
+        ctx.locals["__spawn_idx"].index
+    } else {
+        ctx.alloc_local("__spawn_idx".to_string(), Ty::I32)
+    };
 
     // Load current entity_count into spawn_idx_local
     instrs.push(Instruction::I32Const(0)); // address of entity_count

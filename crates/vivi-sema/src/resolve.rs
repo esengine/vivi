@@ -496,7 +496,6 @@ pub fn resolve_with_max(program: &Program, source: &str, max_entities: u32) -> R
         init_value: FieldValue::I32((heap_base_offset + 4) as i32), // skip past own storage
         offset: heap_base_offset,
     });
-    globals_type_map.insert("__heap_base".to_string(), Ty::I32);
     layout.total_bytes += 4;
 
     Ok(ResolvedProgram {
@@ -625,7 +624,16 @@ fn check_stmts(stmts: &[Stmt], ctx: &mut TypeCtx) -> Result<(), SemaError> {
                 }
             }
             Stmt::Return(None, _) => {}
-            Stmt::Despawn(_) => {}
+            Stmt::Despawn(span) => {
+                if ctx.params.is_empty() {
+                    return Err(SemaError {
+                        message: "despawn can only be used inside an each block".into(),
+                        span: span.clone(),
+                        label: "not inside each".into(),
+                        source_code: ctx.source.to_string(),
+                    });
+                }
+            }
             Stmt::Spawn(spawn) => {
                 for sc in &spawn.components {
                     let comp = ctx.components.get(&sc.component).ok_or_else(|| SemaError {
