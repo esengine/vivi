@@ -288,6 +288,21 @@ impl Interpreter {
                 }
                 Flow::Continue
             }
+            Stmt::ForLoop(f) => {
+                let start_val = self.eval_expr(&f.start, locals, each_params, entity_idx).as_i32();
+                let end_val = self.eval_expr(&f.end, locals, each_params, entity_idx).as_i32();
+                let mut i = start_val;
+                while i < end_val {
+                    locals.insert(f.var.clone(), Value::I32(i));
+                    match self.exec_stmts(&f.body, locals, each_params, entity_idx) {
+                        Flow::Continue => {}
+                        flow @ Flow::Return(_) => return flow,
+                        Flow::Despawn => return Flow::Despawn,
+                    }
+                    i += 1;
+                }
+                Flow::Continue
+            }
             Stmt::Return(Some(expr), _) => {
                 let value = self.eval_expr(expr, locals, each_params, entity_idx);
                 Flow::Return(Some(value))
@@ -342,6 +357,28 @@ impl Interpreter {
                 }
             }
             Expr::Call(name, args, _) => {
+                // Built-in cast functions
+                match name.as_str() {
+                    "i32" => {
+                        let val = self.eval_expr(&args[0], locals, each_params, entity_idx);
+                        return match val {
+                            Value::F32(v) => Value::I32(v as i32),
+                            Value::I32(v) => Value::I32(v),
+                            Value::F64(v) => Value::I32(v as i32),
+                            Value::Bool(v) => Value::I32(if v { 1 } else { 0 }),
+                        };
+                    }
+                    "f32" => {
+                        let val = self.eval_expr(&args[0], locals, each_params, entity_idx);
+                        return match val {
+                            Value::I32(v) => Value::F32(v as f32),
+                            Value::F32(v) => Value::F32(v),
+                            Value::F64(v) => Value::F32(v as f32),
+                            Value::Bool(v) => Value::F32(if v { 1.0 } else { 0.0 }),
+                        };
+                    }
+                    _ => {}
+                }
                 // Built-in memory intrinsics
                 match name.as_str() {
                     "mem_store_i32" => {

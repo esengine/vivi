@@ -605,6 +605,12 @@ fn check_stmts(stmts: &[Stmt], ctx: &mut TypeCtx) -> Result<(), SemaError> {
                 infer_type(&while_stmt.condition, ctx)?;
                 check_stmts(&while_stmt.body, ctx)?;
             }
+            Stmt::ForLoop(f) => {
+                infer_type(&f.start, ctx)?;
+                infer_type(&f.end, ctx)?;
+                ctx.locals.insert(f.var.clone(), Ty::I32);
+                check_stmts(&f.body, ctx)?;
+            }
             Stmt::Expr(expr) => {
                 infer_type(expr, ctx)?;
             }
@@ -724,6 +730,26 @@ fn infer_type(expr: &Expr, ctx: &TypeCtx) -> Result<Ty, SemaError> {
             }
         }
         Expr::Call(name, args, span) => {
+            // Built-in cast functions
+            match name.as_str() {
+                "i32" => {
+                    if args.len() != 1 { return Err(SemaError { message: "i32() expects 1 argument".into(), span: span.clone(), label: "here".into(), source_code: ctx.source.to_string() }); }
+                    let arg_ty = infer_type(&args[0], ctx)?;
+                    if !arg_ty.is_numeric() {
+                        return Err(SemaError { message: format!("i32() expects numeric argument, got `{arg_ty}`"), span: span.clone(), label: "here".into(), source_code: ctx.source.to_string() });
+                    }
+                    return Ok(Ty::I32);
+                }
+                "f32" => {
+                    if args.len() != 1 { return Err(SemaError { message: "f32() expects 1 argument".into(), span: span.clone(), label: "here".into(), source_code: ctx.source.to_string() }); }
+                    let arg_ty = infer_type(&args[0], ctx)?;
+                    if !arg_ty.is_numeric() {
+                        return Err(SemaError { message: format!("f32() expects numeric argument, got `{arg_ty}`"), span: span.clone(), label: "here".into(), source_code: ctx.source.to_string() });
+                    }
+                    return Ok(Ty::F32);
+                }
+                _ => {}
+            }
             // Built-in memory intrinsics
             match name.as_str() {
                 "mem_store_i32" => {

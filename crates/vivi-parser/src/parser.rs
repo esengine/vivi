@@ -152,6 +152,9 @@ impl Parser {
                 component,
                 span: entry_start..entry_end,
             });
+            if self.check(&Token::Comma) {
+                self.advance();
+            }
             self.skip_newlines();
         }
         self.expect(Token::RBrace)?;
@@ -213,6 +216,7 @@ impl Parser {
             Some(Token::Let) => self.parse_let(),
             Some(Token::If) => self.parse_if(),
             Some(Token::While) => self.parse_while(),
+            Some(Token::For) => self.parse_for_loop(),
             Some(Token::Return) => self.parse_return(),
             Some(Token::Spawn) => self.parse_spawn(),
             Some(Token::Despawn) => {
@@ -304,6 +308,28 @@ impl Parser {
         let end = self.previous_span().end;
         Ok(Stmt::While(WhileStmt {
             condition,
+            body,
+            span: start..end,
+        }))
+    }
+
+    fn parse_for_loop(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.current_span().start;
+        self.expect(Token::For)?;
+        let var = self.expect_ident()?;
+        self.expect(Token::In)?;
+        let start_expr = self.parse_expr()?;
+        self.expect(Token::DotDot)?;
+        let end_expr = self.parse_expr()?;
+        self.expect(Token::LBrace)?;
+        self.skip_newlines();
+        let body = self.parse_block_body()?;
+        self.expect(Token::RBrace)?;
+        let end = self.previous_span().end;
+        Ok(Stmt::ForLoop(ForLoopStmt {
+            var,
+            start: start_expr,
+            end: end_expr,
             body,
             span: start..end,
         }))
@@ -533,6 +559,30 @@ impl Parser {
                     }
                 } else {
                     unreachable!()
+                }
+            }
+            Some(Token::I32) | Some(Token::F32) => {
+                let tok = self.advance().token;
+                let name = match tok {
+                    Token::I32 => "i32".to_string(),
+                    Token::F32 => "f32".to_string(),
+                    _ => unreachable!(),
+                };
+                let start = self.previous_span().start;
+                if self.check(&Token::LParen) {
+                    self.advance();
+                    let mut args = Vec::new();
+                    while !self.check(&Token::RParen) {
+                        args.push(self.parse_expr()?);
+                        if self.check(&Token::Comma) {
+                            self.advance();
+                        }
+                    }
+                    self.expect(Token::RParen)?;
+                    let end = self.previous_span().end;
+                    Ok(Expr::Call(name, args, start..end))
+                } else {
+                    Err(self.error(format!("expected `(` after `{name}` cast")))
                 }
             }
             Some(Token::LParen) => {

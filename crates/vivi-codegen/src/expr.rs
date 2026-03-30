@@ -238,6 +238,20 @@ impl<'a> ExprCtx<'a> {
                 instrs.push(Instruction::F32Load(mem4));
                 true
             }
+            "i32" if args.len() == 1 => {
+                self.compile_expr(&args[0], instrs);
+                if self.is_float_expr(&args[0]) {
+                    instrs.push(Instruction::I32TruncSatF32S);
+                }
+                true
+            }
+            "f32" if args.len() == 1 => {
+                self.compile_expr(&args[0], instrs);
+                if !self.is_float_expr(&args[0]) {
+                    instrs.push(Instruction::F32ConvertI32S);
+                }
+                true
+            }
             _ => false,
         }
     }
@@ -271,6 +285,8 @@ impl<'a> ExprCtx<'a> {
                 _ => Ty::Bool,
             },
             Expr::Call(name, _, _) => {
+                if name == "i32" { return Ty::I32; }
+                if name == "f32" { return Ty::F32; }
                 if name == "mem_load_f32" { return Ty::F32; }
                 if name == "mem_load_i32" || name.starts_with("mem_store") { return Ty::I32; }
                 self.fn_return_types.get(name).cloned().unwrap_or(Ty::I32)

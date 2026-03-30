@@ -1088,4 +1088,125 @@ world Game {
             err.message
         );
     }
+
+    #[test]
+    fn test_type_cast() {
+        // Test i32() and f32() cast built-in functions.
+        // A system reads an f32 field, casts to i32, stores in i32 field,
+        // then reads the i32 field, casts to f32, stores in another f32 field.
+        let source = r#"
+component Input {
+    float_val: f32
+    int_val: i32
+}
+
+component Output {
+    truncated: i32
+    converted: f32
+}
+
+system CastTest {
+    query {
+        read Input
+        write Output
+    }
+    each(inp: Input, out: Output) {
+        out.truncated = i32(inp.float_val)
+        out.converted = f32(inp.int_val)
+    }
+}
+
+world Game {
+    systems {
+        CastTest
+    }
+}
+"#;
+        let wasm_bytes = compile_vivi(source);
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm_bytes).unwrap();
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).unwrap();
+
+        let init = instance.get_typed_func::<(), ()>(&mut store, "init").unwrap();
+        let tick = instance.get_typed_func::<(), ()>(&mut store, "tick").unwrap();
+        let memory = instance.get_memory(&mut store, "memory").unwrap();
+
+        init.call(&mut store, ()).unwrap();
+
+        // Layout: Input(float_val: f32, int_val: i32), Output(truncated: i32, converted: f32)
+        let float_val_off = 4usize;
+        let int_val_off = 4 + (MAX_ENTITIES as usize) * 4;
+        let truncated_off = 4 + (MAX_ENTITIES as usize) * 8;
+        let converted_off = 4 + (MAX_ENTITIES as usize) * 12;
+
+        let data = memory.data_mut(&mut store);
+        data[0..4].copy_from_slice(&1i32.to_le_bytes());
+        data[float_val_off..float_val_off + 4].copy_from_slice(&3.75f32.to_le_bytes());
+        data[int_val_off..int_val_off + 4].copy_from_slice(&42i32.to_le_bytes());
+
+        tick.call(&mut store, ()).unwrap();
+
+        let data = memory.data(&store);
+        let truncated = i32::from_le_bytes(data[truncated_off..truncated_off + 4].try_into().unwrap());
+        let converted = f32::from_le_bytes(data[converted_off..converted_off + 4].try_into().unwrap());
+
+        // i32(3.75) should truncate to 3
+        assert_eq!(truncated, 3, "expected i32(3.75)=3, got {truncated}");
+        // f32(42) should convert to 42.0
+        assert!((converted - 42.0).abs() < 1e-6, "expected f32(42)=42.0, got {converted}");
+    }
+
+    #[test]
+    fn test_for_loop() {
+        // Test for loop: for i in 0..5 { } sets component values based on loop index.
+        // A bare system uses a for loop to spawn 5 entities with incrementing x values.
+        let source = r#"
+component Position {
+    x: f32
+    y: f32
+}
+
+system Setup {
+    for i in 0..5 {
+        spawn {
+            Position { x: f32(i), y: 0.0 }
+        }
+    }
+}
+
+world Game {
+    init {
+        Setup
+    }
+    systems {
+    }
+}
+"#;
+        let wasm_bytes = compile_vivi(source);
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm_bytes).unwrap();
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).unwrap();
+
+        let init = instance.get_typed_func::<(), ()>(&mut store, "init").unwrap();
+        let memory = instance.get_memory(&mut store, "memory").unwrap();
+
+        init.call(&mut store, ()).unwrap();
+
+        let data = memory.data(&store);
+        let entity_count = i32::from_le_bytes(data[0..4].try_into().unwrap());
+        assert_eq!(entity_count, 5, "expected 5 entities from for loop, got {entity_count}");
+
+        let pos_x_off = 4usize;
+        for i in 0..5 {
+            let off = pos_x_off + i * 4;
+            let x = f32::from_le_bytes(data[off..off + 4].try_into().unwrap());
+            assert!(
+                (x - i as f32).abs() < 1e-6,
+                "entity {i}: expected x={}.0, got {x}",
+                i
+            );
+        }
+    }
 }

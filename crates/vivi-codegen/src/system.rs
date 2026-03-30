@@ -190,6 +190,30 @@ fn compile_stmt(stmt: &Stmt, ctx: &mut ExprCtx, instrs: &mut Vec<Instruction<'st
             instrs.push(Instruction::End); // end loop
             instrs.push(Instruction::End); // end block
         }
+        Stmt::ForLoop(f) => {
+            // Allocate loop variable
+            let loop_var = ctx.alloc_local(f.var.clone(), Ty::I32);
+            // Compile start expr, set loop var
+            ctx.compile_expr(&f.start, instrs);
+            instrs.push(Instruction::LocalSet(loop_var));
+            // block { loop { get loop_var, compile end, ge_s, br_if 1, body, inc, br 0 } }
+            instrs.push(Instruction::Block(wasm_encoder::BlockType::Empty));
+            instrs.push(Instruction::Loop(wasm_encoder::BlockType::Empty));
+            instrs.push(Instruction::LocalGet(loop_var));
+            ctx.compile_expr(&f.end, instrs);
+            instrs.push(Instruction::I32GeS);
+            instrs.push(Instruction::BrIf(1));
+            for s in &f.body {
+                compile_stmt(s, ctx, instrs);
+            }
+            instrs.push(Instruction::LocalGet(loop_var));
+            instrs.push(Instruction::I32Const(1));
+            instrs.push(Instruction::I32Add);
+            instrs.push(Instruction::LocalSet(loop_var));
+            instrs.push(Instruction::Br(0));
+            instrs.push(Instruction::End); // end loop
+            instrs.push(Instruction::End); // end block
+        }
         Stmt::Spawn(spawn) => {
             compile_spawn(spawn, ctx, instrs);
         }
@@ -368,6 +392,7 @@ pub fn record_stmt_mapping(
         Stmt::Let(s) => s.span.start,
         Stmt::If(s) => s.span.start,
         Stmt::While(s) => s.span.start,
+        Stmt::ForLoop(s) => s.span.start,
         Stmt::Spawn(s) => s.span.start,
         Stmt::Despawn(span) => span.start,
         Stmt::Expr(e) => e.span().start,

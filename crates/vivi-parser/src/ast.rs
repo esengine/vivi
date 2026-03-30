@@ -119,10 +119,20 @@ pub enum Stmt {
     Let(LetStmt),
     If(IfStmt),
     While(WhileStmt),
+    ForLoop(ForLoopStmt),
     Spawn(SpawnStmt),
     Despawn(Span),
     Expr(Expr),
     Return(Option<Expr>, Span),
+}
+
+#[derive(Debug, Clone)]
+pub struct ForLoopStmt {
+    pub var: String,
+    pub start: Expr,
+    pub end: Expr,
+    pub body: Vec<Stmt>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]

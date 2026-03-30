@@ -54,6 +54,10 @@ pub enum Token {
     And,
     #[token("or")]
     Or,
+    #[token("for")]
+    For,
+    #[token("in")]
+    In,
     #[token("not")]
     Not,
 
@@ -84,6 +88,8 @@ pub enum Token {
     Colon,
     #[token(",")]
     Comma,
+    #[token("..")]
+    DotDot,
     #[token(".")]
     Dot,
     #[token("=")]
@@ -154,6 +160,8 @@ impl std::fmt::Display for Token {
             Token::False => write!(f, "false"),
             Token::And => write!(f, "and"),
             Token::Or => write!(f, "or"),
+            Token::For => write!(f, "for"),
+            Token::In => write!(f, "in"),
             Token::Not => write!(f, "not"),
             Token::I32 => write!(f, "i32"),
             Token::I64 => write!(f, "i64"),
@@ -167,6 +175,7 @@ impl std::fmt::Display for Token {
             Token::RParen => write!(f, ")"),
             Token::Colon => write!(f, ":"),
             Token::Comma => write!(f, ","),
+            Token::DotDot => write!(f, ".."),
             Token::Dot => write!(f, "."),
             Token::Eq => write!(f, "="),
             Token::EqEq => write!(f, "=="),
