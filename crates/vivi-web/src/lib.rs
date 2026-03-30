@@ -151,6 +151,23 @@ pub fn generate_runtime_js(
         }
     }
 
+    let uses_input = used_std_modules.iter().any(|m| m == "std.input");
+
+    if uses_input {
+        let input_base = resolved.globals.iter()
+            .find(|g| g.name == "__input_base")
+            .map(|g| g.offset)
+            .unwrap_or(0);
+        js.push_str(&format!("const __INPUT_BUF_OFFSET = {};\n\n", input_base));
+
+        for (_module, source) in load_std_host_sources() {
+            if _module == "input" {
+                js.push_str(source);
+                js.push_str("\n\n");
+            }
+        }
+    }
+
     // Boot
     js.push_str(
         r#"async function boot() {
@@ -164,9 +181,14 @@ pub fn generate_runtime_js(
     const hud = document.getElementById('vivi-hud');
 
     function frame() {
-        tick();
 "#,
     );
+
+    if uses_input {
+        js.push_str("        __vivi_sync_input(memory);\n");
+    }
+
+    js.push_str("        tick();\n");
 
     if uses_render {
         js.push_str("        __vivi_flush_draws(memory);\n");

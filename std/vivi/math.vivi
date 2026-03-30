@@ -20,9 +20,8 @@ fn abs_f32(x: f32) -> f32 {
 }
 
 fn wrap(value: f32, max: f32) -> f32 {
-    let v: f32 = value
-    while v > max { v = v - max }
-    while v < 0.0 { v = v + max }
+    let v: f32 = value % max
+    if v < 0.0 { v = v + max }
     return v
 }
 

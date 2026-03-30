@@ -7,12 +7,14 @@ use vivi_lexer::lex;
 // Embedded standard library modules
 const STD_MATH: &str = include_str!("../../../std/vivi/math.vivi");
 const STD_RENDER: &str = include_str!("../../../std/vivi/render.vivi");
+const STD_INPUT: &str = include_str!("../../../std/vivi/input.vivi");
 
 fn get_std_module(path: &[String]) -> Option<&'static str> {
     if path.len() == 2 && path[0] == "std" {
         match path[1].as_str() {
             "math" => Some(STD_MATH),
             "render" => Some(STD_RENDER),
+            "input" => Some(STD_INPUT),
             _ => None,
         }
     } else {

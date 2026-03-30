@@ -1209,4 +1209,46 @@ world Game {
             );
         }
     }
+
+    #[test]
+    fn test_modulo_operator() {
+        let source = r#"
+component Data {
+    val: i32
+    rem: i32
+}
+
+entity E1 {
+    Data { val: 17, rem: 0 }
+}
+
+system Compute {
+    query { write Data }
+    each(d: Data) {
+        d.rem = d.val % 5
+    }
+}
+
+world Main {
+    systems { Compute }
+}
+"#;
+        let wasm = compile_vivi(source);
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm).unwrap();
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).unwrap();
+
+        let init = instance.get_typed_func::<(), ()>(&mut store, "init").unwrap();
+        let tick = instance.get_typed_func::<(), ()>(&mut store, "tick").unwrap();
+        init.call(&mut store, ()).unwrap();
+        tick.call(&mut store, ()).unwrap();
+
+        let mem = instance.get_memory(&mut store, "memory").unwrap();
+        let data = mem.data(&store);
+        // 17 % 5 = 2
+        let rem_offset = 4 + MAX_ENTITIES as usize * 4 + 0 * 4; // Data.rem field after Data.val
+        let result = i32::from_le_bytes(data[rem_offset..rem_offset + 4].try_into().unwrap());
+        assert_eq!(result, 2);
+    }
 }

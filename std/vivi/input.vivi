@@ -1,0 +1,47 @@
+// Input — keyboard and mouse state from shared memory buffer
+// Buffer layout: [mouse_x:f32, mouse_y:f32, mouse_down:i32, keys[256]:i32]
+
+global __input_base: i32 = 0
+global __input_ready: i32 = 0
+
+fn __ensure_input_buf() {
+    if __input_ready == 0 {
+        // Place input buffer 4MB after heap_base to avoid collision with render buffer
+        __input_base = __heap_base + 4194304
+        __input_ready = 1
+    }
+}
+
+fn is_key_down(key_code: i32) -> bool {
+    __ensure_input_buf()
+    let val: i32 = mem_load_i32(__input_base + 12 + key_code * 4)
+    return val == 1
+}
+
+fn mouse_x() -> f32 {
+    __ensure_input_buf()
+    return mem_load_f32(__input_base)
+}
+
+fn mouse_y() -> f32 {
+    __ensure_input_buf()
+    return mem_load_f32(__input_base + 4)
+}
+
+fn is_mouse_down() -> bool {
+    __ensure_input_buf()
+    let val: i32 = mem_load_i32(__input_base + 8)
+    return val == 1
+}
+
+fn key_left() -> i32 { return 37 }
+fn key_up() -> i32 { return 38 }
+fn key_right() -> i32 { return 39 }
+fn key_down() -> i32 { return 40 }
+fn key_w() -> i32 { return 87 }
+fn key_a() -> i32 { return 65 }
+fn key_s() -> i32 { return 83 }
+fn key_d() -> i32 { return 68 }
+fn key_space() -> i32 { return 32 }
+fn key_enter() -> i32 { return 13 }
+fn key_escape() -> i32 { return 27 }

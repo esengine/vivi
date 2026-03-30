@@ -101,24 +101,38 @@ impl<'a> ExprCtx<'a> {
                 }
             }
             Expr::BinOp(left, op, right, _) => {
-                self.compile_expr(left, instrs);
-                self.compile_expr(right, instrs);
                 let is_float = self.is_float_expr(left);
-                let instr = match op {
-                    BinOp::Add => pick(is_float, Instruction::F32Add, Instruction::I32Add),
-                    BinOp::Sub => pick(is_float, Instruction::F32Sub, Instruction::I32Sub),
-                    BinOp::Mul => pick(is_float, Instruction::F32Mul, Instruction::I32Mul),
-                    BinOp::Div => pick(is_float, Instruction::F32Div, Instruction::I32DivS),
-                    BinOp::Eq => pick(is_float, Instruction::F32Eq, Instruction::I32Eq),
-                    BinOp::NotEq => pick(is_float, Instruction::F32Ne, Instruction::I32Ne),
-                    BinOp::Lt => pick(is_float, Instruction::F32Lt, Instruction::I32LtS),
-                    BinOp::Gt => pick(is_float, Instruction::F32Gt, Instruction::I32GtS),
-                    BinOp::LtEq => pick(is_float, Instruction::F32Le, Instruction::I32LeS),
-                    BinOp::GtEq => pick(is_float, Instruction::F32Ge, Instruction::I32GeS),
-                    BinOp::And => Instruction::I32And,
-                    BinOp::Or => Instruction::I32Or,
-                };
-                instrs.push(instr);
+                if matches!(op, BinOp::Rem) && is_float {
+                    // f32 has no native rem instruction in WASM.
+                    // Emit: a - trunc(a / b) * b
+                    self.compile_expr(left, instrs);   // a
+                    self.compile_expr(left, instrs);   // a a
+                    self.compile_expr(right, instrs);  // a a b
+                    instrs.push(Instruction::F32Div);  // a (a/b)
+                    instrs.push(Instruction::F32Trunc); // a trunc(a/b)
+                    self.compile_expr(right, instrs);  // a trunc(a/b) b
+                    instrs.push(Instruction::F32Mul);  // a (trunc(a/b)*b)
+                    instrs.push(Instruction::F32Sub);  // a - trunc(a/b)*b
+                } else {
+                    self.compile_expr(left, instrs);
+                    self.compile_expr(right, instrs);
+                    let instr = match op {
+                        BinOp::Add => pick(is_float, Instruction::F32Add, Instruction::I32Add),
+                        BinOp::Sub => pick(is_float, Instruction::F32Sub, Instruction::I32Sub),
+                        BinOp::Mul => pick(is_float, Instruction::F32Mul, Instruction::I32Mul),
+                        BinOp::Div => pick(is_float, Instruction::F32Div, Instruction::I32DivS),
+                        BinOp::Rem => Instruction::I32RemS,
+                        BinOp::Eq => pick(is_float, Instruction::F32Eq, Instruction::I32Eq),
+                        BinOp::NotEq => pick(is_float, Instruction::F32Ne, Instruction::I32Ne),
+                        BinOp::Lt => pick(is_float, Instruction::F32Lt, Instruction::I32LtS),
+                        BinOp::Gt => pick(is_float, Instruction::F32Gt, Instruction::I32GtS),
+                        BinOp::LtEq => pick(is_float, Instruction::F32Le, Instruction::I32LeS),
+                        BinOp::GtEq => pick(is_float, Instruction::F32Ge, Instruction::I32GeS),
+                        BinOp::And => Instruction::I32And,
+                        BinOp::Or => Instruction::I32Or,
+                    };
+                    instrs.push(instr);
+                }
             }
             Expr::UnaryOp(op, inner, _) => match op {
                 UnaryOp::Neg => {
@@ -281,7 +295,7 @@ impl<'a> ExprCtx<'a> {
                 Ty::I32
             }
             Expr::BinOp(left, op, _, _) => match op {
-                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => self.infer_expr_ty(left),
+                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => self.infer_expr_ty(left),
                 _ => Ty::Bool,
             },
             Expr::Call(name, _, _) => {

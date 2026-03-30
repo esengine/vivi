@@ -114,6 +114,8 @@ pub enum Token {
     Star,
     #[token("/")]
     Slash,
+    #[token("%")]
+    Percent,
     #[token("->")]
     Arrow,
 
@@ -188,6 +190,7 @@ impl std::fmt::Display for Token {
             Token::Minus => write!(f, "-"),
             Token::Star => write!(f, "*"),
             Token::Slash => write!(f, "/"),
+            Token::Percent => write!(f, "%"),
             Token::Arrow => write!(f, "->"),
             Token::FloatLit(v) => write!(f, "{v}"),
             Token::IntLit(v) => write!(f, "{v}"),

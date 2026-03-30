@@ -817,7 +817,7 @@ fn infer_type(expr: &Expr, ctx: &TypeCtx) -> Result<Ty, SemaError> {
             let left_ty = infer_type(left, ctx)?;
             let right_ty = infer_type(right, ctx)?;
             match op {
-                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
+                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
                     if left_ty.is_numeric() && right_ty.is_numeric() {
                         if left_ty == right_ty {
                             Ok(left_ty)

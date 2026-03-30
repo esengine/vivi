@@ -478,6 +478,7 @@ impl Parser {
         match self.peek_token()? {
             Token::Star => Some(BinOp::Mul),
             Token::Slash => Some(BinOp::Div),
+            Token::Percent => Some(BinOp::Rem),
             _ => None,
         }
     }

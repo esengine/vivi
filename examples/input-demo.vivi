@@ -1,0 +1,57 @@
+// Interactive input demo — move a square with arrow keys or WASD
+use std.math
+use std.input
+use std.render
+
+component Position {
+    x: f32
+    y: f32
+}
+
+component Visual {
+    size: f32
+    r: i32
+    g: i32
+    b: i32
+}
+
+entity Player {
+    Position { x: 400.0, y: 300.0 }
+    Visual { size: 20.0, r: 100, g: 200, b: 255 }
+}
+
+global speed: f32 = 3.0
+
+system Input {
+    query { write Position }
+    each(pos: Position) {
+        if is_key_down(key_left()) or is_key_down(key_a()) {
+            pos.x = pos.x - speed
+        }
+        if is_key_down(key_right()) or is_key_down(key_d()) {
+            pos.x = pos.x + speed
+        }
+        if is_key_down(key_up()) or is_key_down(key_w()) {
+            pos.y = pos.y - speed
+        }
+        if is_key_down(key_down()) or is_key_down(key_s()) {
+            pos.y = pos.y + speed
+        }
+        // Wrap around screen edges
+        pos.x = wrap(pos.x, 800.0)
+        pos.y = wrap(pos.y, 600.0)
+    }
+}
+
+system Render {
+    query { read Position, read Visual }
+    each(pos: Position, vis: Visual) {
+        clear_screen()
+        set_color(vis.r, vis.g, vis.b)
+        draw_rect(pos.x, pos.y, vis.size, vis.size)
+    }
+}
+
+world Main {
+    systems { Input, Render }
+}
