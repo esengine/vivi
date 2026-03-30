@@ -63,8 +63,9 @@ fn parse_and_resolve(
         .into_diagnostic()
         .wrap_err_with(|| format!("failed to read `{}`", input.display()))?;
 
+    let base_dir = input.parent();
     let (program, used_modules) =
-        vivi_parser::parse_with_modules(&source).map_err(|e| miette::miette!("{e}"))?;
+        vivi_parser::parse_file(&source, base_dir).map_err(|e| miette::miette!("{e}"))?;
 
     let resolved = vivi_sema::resolve_with_max(&program, &source, max_entities)
         .map_err(|e| miette::Report::new(e))?;

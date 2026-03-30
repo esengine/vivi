@@ -21,22 +21,32 @@ fn get_std_module(path: &[String]) -> Option<&'static str> {
 }
 
 pub fn parse(source: &str) -> Result<ast::Program, Box<dyn std::error::Error>> {
-    parse_with_modules(source).map(|(program, _)| program)
+    parse_file(source, None).map(|(program, _)| program)
 }
 
 pub fn parse_with_modules(source: &str) -> Result<(ast::Program, Vec<String>), Box<dyn std::error::Error>> {
+    parse_file(source, None)
+}
+
+/// Parse with a base directory for resolving local `use ./path` imports.
+pub fn parse_file(source: &str, base_dir: Option<&std::path::Path>) -> Result<(ast::Program, Vec<String>), Box<dyn std::error::Error>> {
     let tokens = lex(source)?;
     let mut parser = parser::Parser::new(tokens, source.to_string());
     let mut program = parser.parse_program()?;
 
     let mut used_modules = Vec::new();
-    resolve_uses(&mut program, &mut used_modules)?;
+    let mut resolved = HashSet::new();
+    resolve_uses(&mut program, &mut used_modules, &mut resolved, base_dir)?;
 
     Ok((program, used_modules))
 }
 
-fn resolve_uses(program: &mut ast::Program, used_modules: &mut Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
-    let mut resolved: HashSet<String> = HashSet::new();
+fn resolve_uses(
+    program: &mut ast::Program,
+    used_modules: &mut Vec<String>,
+    resolved: &mut HashSet<String>,
+    base_dir: Option<&std::path::Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut i = 0;
     while i < program.items.len() {
         if let ast::Item::Use(use_decl) = &program.items[i] {
@@ -46,16 +56,39 @@ fn resolve_uses(program: &mut ast::Program, used_modules: &mut Vec<String>) -> R
                 continue;
             }
 
-            let module_src = get_std_module(&use_decl.path)
-                .ok_or_else(|| format!("unknown module `{path_key}`"))?;
+            let module_src: String;
+            let is_local;
+
+            if let Some(std_src) = get_std_module(&use_decl.path) {
+                // Standard library module
+                module_src = std_src.to_string();
+                is_local = false;
+            } else {
+                // Local file import: use ./path/to/module → ./path/to/module.vivi
+                let file_path = use_decl.path.join("/") + ".vivi";
+                let full_path = if let Some(dir) = base_dir {
+                    dir.join(&file_path)
+                } else {
+                    std::path::PathBuf::from(&file_path)
+                };
+                module_src = std::fs::read_to_string(&full_path)
+                    .map_err(|e| format!("cannot load module `{path_key}`: {} ({})", e, full_path.display()))?;
+                is_local = true;
+            }
 
             let mut module_program = {
-                let tokens = lex(module_src)?;
-                let mut p = parser::Parser::new(tokens, module_src.to_string());
+                let tokens = lex(&module_src)?;
+                let mut p = parser::Parser::new(tokens, module_src.clone());
                 p.parse_program()?
             };
 
-            resolve_uses(&mut module_program, used_modules)?;
+            // Resolve uses in the imported module (with same base_dir for local, or None for std)
+            let nested_base = if is_local {
+                base_dir
+            } else {
+                None
+            };
+            resolve_uses(&mut module_program, used_modules, resolved, nested_base)?;
 
             resolved.insert(path_key.clone());
             used_modules.push(path_key);
